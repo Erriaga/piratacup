@@ -64,18 +64,16 @@ function initDb() {
         team2_id INTEGER,
         team1_score INTEGER DEFAULT 0,
         team2_score INTEGER DEFAULT 0,
+        team1_pen INTEGER DEFAULT NULL,
+        team2_pen INTEGER DEFAULT NULL,
         UNIQUE(phase, match_index)
     )`, () => {
         db.get("SELECT COUNT(*) as count FROM matches", (err, row) => {
             if (row && row.count === 0) {
                 const initialMatches = [
-                    // Swiss Round 1: 4 matches (0-0 pool)
                     ['swiss_r1', 0], ['swiss_r1', 1], ['swiss_r1', 2], ['swiss_r1', 3],
-                    // Swiss Round 2: 4 matches (2 for 1-0, 2 for 0-1)
                     ['swiss_r2', 0], ['swiss_r2', 1], ['swiss_r2', 2], ['swiss_r2', 3],
-                    // Swiss Round 3: 2 matches (1-1 pool)
                     ['swiss_r3', 0], ['swiss_r3', 1],
-                    // Playoffs: Semifinals (2), Third Place (1), Final (1)
                     ['playoffs_semi', 0], ['playoffs_semi', 1],
                     ['playoffs_third', 0],
                     ['playoffs_final', 0]
@@ -407,7 +405,8 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
             align-items: center;
             padding: 6px 8px;
             border-bottom: 1px solid rgba(255,255,255,0.05);
-            gap: 8px;
+            gap: 6px;
+            flex-wrap: wrap;
         }
 
         .match-row:last-child {
@@ -441,7 +440,7 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
             background: #111;
             border: 1px solid var(--gold-secondary);
             padding: 12px;
-            margin-bottom: 25px;
+            margin-bottom: 20px;
         }
 
         .teams-palette h4 {
@@ -492,6 +491,7 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
             font-weight: 700;
             color: var(--text-main);
             flex: 1;
+            min-width: 90px;
             cursor: pointer;
         }
 
@@ -501,7 +501,7 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
         }
 
         .score-input {
-            width: 40px;
+            width: 38px;
             background: #0d0d0d;
             border: 1px solid var(--card-border);
             color: var(--gold-light);
@@ -509,6 +509,22 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
             font-weight: 800;
             font-size: 0.85rem;
             padding: 4px;
+        }
+
+        .pen-inputs {
+            display: none;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.75rem;
+            color: var(--gold-light);
+            margin-top: 4px;
+            justify-content: center;
+            background: rgba(212,175,55,0.05);
+            padding: 4px;
+        }
+
+        .pen-inputs.active {
+            display: flex;
         }
 
         .admin-table-container {
@@ -734,13 +750,15 @@ app.post('/save-matches', (req, res) => {
 
     db.serialize(() => {
         db.run("BEGIN TRANSACTION");
-        const stmt = db.prepare(`UPDATE matches SET team1_id = ?, team2_id = ?, team1_score = ?, team2_score = ? WHERE phase = ? AND match_index = ?`);
+        const stmt = db.prepare(`UPDATE matches SET team1_id = ?, team2_id = ?, team1_score = ?, team2_score = ?, team1_pen = ?, team2_pen = ? WHERE phase = ? AND match_index = ?`);
         matchesData.forEach(m => {
             const t1 = (m.team1_id !== null && m.team1_id !== undefined && m.team1_id !== '') ? parseInt(m.team1_id) : null;
             const t2 = (m.team2_id !== null && m.team2_id !== undefined && m.team2_id !== '') ? parseInt(m.team2_id) : null;
             const s1 = parseInt(m.team1_score) || 0;
             const s2 = parseInt(m.team2_score) || 0;
-            stmt.run(t1, t2, s1, s2, m.phase, m.match_index);
+            const p1 = (m.team1_pen !== null && m.team1_pen !== undefined && m.team1_pen !== '') ? parseInt(m.team1_pen) : null;
+            const p2 = (m.team2_pen !== null && m.team2_pen !== undefined && m.team2_pen !== '') ? parseInt(m.team2_pen) : null;
+            stmt.run(t1, t2, s1, s2, p1, p2, m.phase, m.match_index);
         });
         stmt.finalize();
         db.run("COMMIT", (err) => {
@@ -790,9 +808,8 @@ app.get('/', (req, res) => {
         db.all("SELECT * FROM matches", (err, matches) => {
             let body = '';
 
-            // Helper to find match by phase and index
             const getMatch = (phase, idx) => {
-                return matches.find(m => m.phase === phase && m.match_index === idx) || { team1_id: null, team2_id: null, team1_score: 0, team2_score: 0 };
+                return matches.find(m => m.phase === phase && m.match_index === idx) || { team1_id: null, team2_id: null, team1_score: 0, team2_score: 0, team1_pen: null, team2_pen: null };
             };
 
             const getTeamName = (id) => {
@@ -880,14 +897,13 @@ app.get('/', (req, res) => {
                 <div class="grid-teams">${allTeams}</div>`;
 
             } else if (activeTab === 'edition2027') {
-                // Render Edition 2027 with Admin match management or read-only view
                 let teamsJson = JSON.stringify(teams);
 
-                // Helper renderer for match box
                 const renderMatchBox = (phase, idx, labelTitle) => {
                     const m = getMatch(phase, idx);
                     const t1Name = getTeamName(m.team1_id);
                     const t2Name = getTeamName(m.team2_id);
+                    const isTied = (m.team1_score !== null && m.team2_score !== null && m.team1_score === m.team2_score && (m.team1_score > 0 || m.team2_score >= 0));
 
                     if (isAdmin) {
                         return `<div class="match-box" data-phase="${phase}" data-match-index="${idx}">
@@ -896,23 +912,33 @@ app.get('/', (req, res) => {
                                 <div class="match-slot" data-slot="1" data-team-id="${m.team1_id || ''}" ondragover="allowDrop(event)" ondragleave="removeDragOver(event)" ondrop="dropTeam(event, '${phase}', ${idx}, 1)" onclick="selectSlotForClick(this, '${phase}', ${idx}, 1)">
                                     <span>${t1Name}</span>
                                 </div>
-                                <input type="number" min="0" class="score-input" value="${m.team1_score}" data-score="1" onchange="markDirty()">
+                                <input type="number" min="0" class="score-input" value="${m.team1_score}" data-score="1" onchange="checkTie(this)">
                                 <span style="font-weight:800; color:var(--text-muted);">X</span>
-                                <input type="number" min="0" class="score-input" value="${m.team2_score}" data-score="2" onchange="markDirty()">
+                                <input type="number" min="0" class="score-input" value="${m.team2_score}" data-score="2" onchange="checkTie(this)">
                                 <div class="match-slot" data-slot="2" data-team-id="${m.team2_id || ''}" ondragover="allowDrop(event)" ondragleave="removeDragOver(event)" ondrop="dropTeam(event, '${phase}', ${idx}, 2)" onclick="selectSlotForClick(this, '${phase}', ${idx}, 2)">
                                     <span>${t2Name}</span>
                                 </div>
+                            </div>
+                            <div class="pen-inputs ${isTied ? 'active' : ''}">
+                                <span>Pênaltis:</span>
+                                <input type="number" min="0" class="score-input pen-input-1" value="${m.team1_pen !== null ? m.team1_pen : ''}" placeholder="P1" onchange="markDirty()">
+                                <span>-</span>
+                                <input type="number" min="0" class="score-input pen-input-2" value="${m.team2_pen !== null ? m.team2_pen : ''}" placeholder="P2" onchange="markDirty()">
                             </div>
                             <div style="text-align: right; padding: 2px 6px;">
                                 <button type="button" onclick="clearMatchSlot('${phase}', ${idx})" style="background:none; border:none; color:var(--accent-red); font-size:0.7rem; cursor:pointer; font-weight:700;">Limpar Partida</button>
                             </div>
                         </div>`;
                     } else {
+                        let penDisplay = '';
+                        if (m.team1_pen !== null && m.team2_pen !== null && m.team1_score === m.team2_score) {
+                            penDisplay = ` <span style="font-size:0.75rem; color:var(--gold-secondary);">(pên. ${m.team1_pen}-${m.team2_pen})</span>`;
+                        }
                         return `<div class="match-box">
                             <div style="font-size: 0.75rem; color: var(--gold-light); padding: 4px 8px; background: rgba(212,175,55,0.08);">${labelTitle}</div>
                             <div class="match-row">
                                 <span class="match-teams">${t1Name} (${getTeamFullName(m.team1_id)})</span>
-                                <span class="match-score">${m.team1_score} - ${m.team2_score}</span>
+                                <span class="match-score">${m.team1_score} - ${m.team2_score}${penDisplay}</span>
                                 <span class="match-teams">${t2Name} (${getTeamFullName(m.team2_id)})</span>
                             </div>
                         </div>`;
@@ -931,7 +957,7 @@ app.get('/', (req, res) => {
                     <div style="background: rgba(212,175,55,0.08); border: 1px solid var(--gold-secondary); padding: 20px; margin-bottom: 25px;">
                         <h3 style="color: var(--gold-primary); margin-bottom: 10px; font-size: 1.1rem;">🛠️ Painel de Gerenciamento da Edição 2027</h3>
                         <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">
-                            Arraste as siglas das equipes (ou clique na equipe e depois no quadrado da partida) para formar os confrontos. O mesmo time pode jogar em rodadas diferentes, mas não contra si mesmo na mesma partida.
+                            Arraste as siglas das equipes (ou clique na equipe e depois no quadrado da partida) para formar os confrontos. O mesmo time pode jogar em rodadas diferentes, mas não contra si mesmo na mesma partida. Em caso de empate, insira o placar dos pênaltis.
                         </p>
                         
                         <div class="teams-palette">
@@ -1065,6 +1091,21 @@ app.get('/', (req, res) => {
                         markDirty();
                     }
 
+                    function checkTie(inputElem) {
+                        const matchBox = inputElem.closest('.match-box');
+                        const scoreInputs = matchBox.querySelectorAll('.score-input');
+                        const s1 = parseInt(scoreInputs[0].value) || 0;
+                        const s2 = parseInt(scoreInputs[1].value) || 0;
+                        const penContainer = matchBox.querySelector('.pen-inputs');
+
+                        if (s1 === s2 && (scoreInputs[0].value !== '' && scoreInputs[1].value !== '')) {
+                            penContainer.classList.add('active');
+                        } else {
+                            penContainer.classList.remove('active');
+                        }
+                        markDirty();
+                    }
+
                     function clearMatchSlot(phase, matchIndex) {
                         const matchBox = document.querySelector(\`.match-box[data-phase="\${phase}"][data-match-index="\${matchIndex}"]\`);
                         if (!matchBox) return;
@@ -1073,6 +1114,8 @@ app.get('/', (req, res) => {
                             s.querySelector('span').innerText = 'TBD';
                         });
                         matchBox.querySelectorAll('.score-input').forEach(i => i.value = '0');
+                        matchBox.querySelector('.pen-inputs').classList.remove('active');
+                        matchBox.querySelectorAll('.pen-inputs input').forEach(i => i.value = '');
                         markDirty();
                     }
 
@@ -1097,7 +1140,9 @@ app.get('/', (req, res) => {
                             const matchIndex = parseInt(box.getAttribute('data-match-index'));
                             const slot1 = box.querySelector('.match-slot[data-slot="1"]');
                             const slot2 = box.querySelector('.match-slot[data-slot="2"]');
-                            const scoreInputs = box.querySelectorAll('.score-input');
+                            const scoreInputs = box.querySelectorAll('.match-row .score-input');
+                            const penInput1 = box.querySelector('.pen-input-1');
+                            const penInput2 = box.querySelector('.pen-input-2');
 
                             matchesPayload.push({
                                 phase: phase,
@@ -1105,7 +1150,9 @@ app.get('/', (req, res) => {
                                 team1_id: slot1.getAttribute('data-team-id') || null,
                                 team2_id: slot2.getAttribute('data-team-id') || null,
                                 team1_score: parseInt(scoreInputs[0].value) || 0,
-                                team2_score: parseInt(scoreInputs[1].value) || 0
+                                team2_score: parseInt(scoreInputs[1].value) || 0,
+                                team1_pen: (penInput1 && penInput1.value !== '') ? parseInt(penInput1.value) : null,
+                                team2_pen: (penInput2 && penInput2.value !== '') ? parseInt(penInput2.value) : null
                             });
                         });
 
