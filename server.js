@@ -802,17 +802,20 @@ app.post('/crud', (req, res) => {
 
         if (crud_action === 'create') {
             db.run("INSERT INTO teams (name, acronym, image, champion, runner_up, third_place, semifinalist) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                [name, acr, image, c, r, tp, s], () => {
+                [name, acr, image, c, r, tp, s], (err) => {
+                    if (err) console.error("Erro ao criar equipe:", err.message);
                     res.redirect('/?tab=admin');
                 });
         } else {
             db.run("UPDATE teams SET name=?, acronym=?, image=?, champion=?, runner_up=?, third_place=?, semifinalist=? WHERE id=?",
-                [name, acr, image, c, r, tp, s, id], () => {
+                [name, acr, image, c, r, tp, s, id], (err) => {
+                    if (err) console.error("Erro ao atualizar equipe:", err.message);
                     res.redirect('/?tab=admin');
                 });
         }
     } else if (crud_action === 'delete') {
-        db.run("DELETE FROM teams WHERE id=?", [id], () => {
+        db.run("DELETE FROM teams WHERE id=?", [id], (err) => {
+            if (err) console.error("Erro ao excluir equipe:", err.message);
             res.redirect('/?tab=admin');
         });
     }
@@ -831,12 +834,12 @@ app.get('/', (req, res) => {
             };
 
             const getTeamName = (id) => {
-                const t = teams.find(item => item.id == id);
+                const t = teams.find(item => String(item.id) === String(id));
                 return t ? t.acronym : 'TBD';
             };
 
             const getTeamFullName = (id) => {
-                const t = teams.find(item => item.id == id);
+                const t = teams.find(item => String(item.id) === String(id));
                 return t ? t.name : 'Aguardando';
             };
 
@@ -965,8 +968,8 @@ app.get('/', (req, res) => {
                 let adminControlsHtml = '';
                 if (isAdmin) {
                     let paletteChips = teams.map(t => 
-                        `<div class="team-chip" draggable="true" ondragstart="dragTeam(event, ${t.id})" onclick="clickTeamPalette(${t.id}, '${t.acronym}')">
-                            🛡️ ${t.acronym} - ${t.name}
+                        `<div class="team-chip" draggable="true" ondragstart="dragTeam(event, ${t.id})" onclick="clickTeamPalette(event, ${t.id}, '${t.acronym}')">
+                            ${t.acronym} - ${t.name}
                         </div>`
                     ).join('');
 
@@ -1070,10 +1073,10 @@ app.get('/', (req, res) => {
                         }
                     }
 
-                    function clickTeamPalette(teamId, acronym) {
+                    function clickTeamPalette(e, teamId, acronym) {
                         selectedTeamForClick = { id: teamId, acronym: acronym };
                         document.querySelectorAll('.team-chip').forEach(c => c.classList.remove('selected'));
-                        event.currentTarget.classList.add('selected');
+                        e.currentTarget.classList.add('selected');
                     }
 
                     function selectSlotForClick(slotElem, phase, matchIndex, slotNum) {
@@ -1094,13 +1097,13 @@ app.get('/', (req, res) => {
                         const otherSlotNum = slotNum === 1 ? 2 : 1;
                         const otherSlot = matchBox.querySelector(\`.match-slot[data-slot="\${otherSlotNum}"]\`);
 
-                        if (otherSlot && otherSlot.getAttribute('data-team-id') == teamId) {
+                        if (otherSlot && String(otherSlot.getAttribute('data-team-id')) === String(teamId)) {
                             showStatus('Uma equipe não pode jogar contra si mesma na mesma partida!', true);
                             return;
                         }
 
                         const targetSlot = slotNum === 1 ? slot1 : slot2;
-                        const teamObj = allTeamsData.find(t => t.id == teamId);
+                        const teamObj = allTeamsData.find(t => String(t.id) === String(teamId));
                         if (!teamObj) return;
 
                         targetSlot.setAttribute('data-team-id', teamObj.id);
@@ -1194,7 +1197,7 @@ app.get('/', (req, res) => {
                 const editId = req.query.edit;
                 let editTeam = null;
                 if (editId) {
-                    editTeam = teams.find(t => t.id == editId);
+                    editTeam = teams.find(t => String(t.id) === String(editId));
                 }
 
                 let rows = teams.map(t => `<tr>
