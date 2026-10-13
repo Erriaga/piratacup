@@ -699,7 +699,7 @@ app.get('/', (req, res) => {
                 <h2 style="color: #e67e22; font-size: 2.2rem; font-weight: 900;">EDIÇÃO 2027</h2>
             </div>
 
-            <div class="sub-phase-title">FASE SUÍÇA</div>
+            <div class="sub-phase-title" style="text-align: center;">FASE SUÍÇA</div>
             <div class="swiss-container">
                 <div class="swiss-card">
                     <h3>⚓ Rodada 1</h3>
@@ -754,7 +754,7 @@ app.get('/', (req, res) => {
                 </div>
             </div>
 
-            <div class="sub-phase-title">FASE FINAL</div>
+            <div class="sub-phase-title" style="text-align: center;">FASE FINAL</div>
             <div class="swiss-container">
                 <div class="swiss-card">
                     <h3>⚓ Semifinais</h3>
@@ -788,10 +788,9 @@ app.get('/', (req, res) => {
         } else if (activeTab === 'login') {
             body = `<div class="login-box">
                 <h2>🔐 Acesso Administrativo</h2>
-                <p style="color: var(--text-muted); margin-bottom: 20px; font-size: 0.9rem;">Área restrita ao Gerenciador e Roni.</p>
                 <form method="POST" action="/login">
-                    <div class="form-group"><label>Usuário:</label><input type="text" name="username" class="form-control" required placeholder="gerenciador ou roni"></div>
-                    <div class="form-group"><label>Senha:</label><input type="password" name="password" class="form-control" required placeholder="Senha"></div>
+                    <div class="form-group"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
+                    <div class="form-group"><label>Senha</label><input type="password" name="password" class="form-control" style="text-align: center;" required></div>
                     <button type="submit" class="btn-gold" style="width: 100%; margin-top: 10px;">Entrar no Navio</button>
                 </form>
             </div>`;
