@@ -435,7 +435,6 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
             text-align: center;
         }
 
-        /* Admin Drag & Drop / Match Management styles */
         .teams-palette {
             background: #111;
             border: 1px solid var(--gold-secondary);
@@ -698,8 +697,8 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
     </header>
 
     <main>
-        ${crudMsg ? `<div class="alert alert-success">\${crudMsg}</div>` : ''}
-        ${loginError ? `<div class="alert alert-error">\${loginError}</div>` : ''}
+        ${crudMsg ? `<div class="alert alert-success">${crudMsg}</div>` : ''}
+        ${loginError ? `<div class="alert alert-error">${loginError}</div>` : ''}
         ${content.body}
     </main>
 
@@ -1048,11 +1047,12 @@ app.get('/', (req, res) => {
 
                 ${isAdmin ? `
                 <script>
-                    const allTeamsData = \${teamsJson};
+                    const allTeamsData = ${teamsJson};
                     let selectedTeamForClick = null;
 
                     function dragTeam(e, teamId) {
                         e.dataTransfer.setData('text/plain', teamId);
+                        e.dataTransfer.setData('text', teamId);
                     }
 
                     function allowDrop(e) {
@@ -1067,7 +1067,7 @@ app.get('/', (req, res) => {
                     function dropTeam(e, phase, matchIndex, slotNum) {
                         e.preventDefault();
                         e.currentTarget.classList.remove('drag-over');
-                        const teamId = e.dataTransfer.getData('text/plain');
+                        const teamId = e.dataTransfer.getData('text') || e.dataTransfer.getData('text/plain');
                         if (teamId) {
                             assignTeam(phase, matchIndex, slotNum, teamId);
                         }
@@ -1225,7 +1225,7 @@ app.get('/', (req, res) => {
                     <h3 style="margin-bottom: 15px; text-align: left;">${editTeam ? '✏️ Editar Equipe' : '➕ Cadastrar Nova Equipe'}</h3>
                     <form method="POST" action="/crud">
                         <input type="hidden" name="crud_action" value="${editTeam ? 'update' : 'create'}">
-                        ${editTeam ? `<input type="hidden" name="id" value="\${editTeam.id}">` : ''}
+                        ${editTeam ? `<input type="hidden" name="id" value="${editTeam.id}">` : ''}
 
                         <div class="form-row">
                             <div class="form-group">
