@@ -55,6 +55,37 @@ function initDb() {
             }
         });
     });
+
+    db.run(`CREATE TABLE IF NOT EXISTS matches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        phase TEXT NOT NULL,
+        match_index INTEGER NOT NULL,
+        team1_id INTEGER,
+        team2_id INTEGER,
+        team1_score INTEGER DEFAULT 0,
+        team2_score INTEGER DEFAULT 0,
+        UNIQUE(phase, match_index)
+    )`, () => {
+        db.get("SELECT COUNT(*) as count FROM matches", (err, row) => {
+            if (row && row.count === 0) {
+                const initialMatches = [
+                    // Swiss Round 1: 4 matches (0-0 pool)
+                    ['swiss_r1', 0], ['swiss_r1', 1], ['swiss_r1', 2], ['swiss_r1', 3],
+                    // Swiss Round 2: 4 matches (2 for 1-0, 2 for 0-1)
+                    ['swiss_r2', 0], ['swiss_r2', 1], ['swiss_r2', 2], ['swiss_r2', 3],
+                    // Swiss Round 3: 2 matches (1-1 pool)
+                    ['swiss_r3', 0], ['swiss_r3', 1],
+                    // Playoffs: Semifinals (2), Third Place (1), Final (1)
+                    ['playoffs_semi', 0], ['playoffs_semi', 1],
+                    ['playoffs_third', 0],
+                    ['playoffs_final', 0]
+                ];
+                const stmt = db.prepare("INSERT INTO matches (phase, match_index) VALUES (?, ?)");
+                initialMatches.forEach(m => stmt.run(m));
+                stmt.finalize();
+            }
+        });
+    });
 }
 
 function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
@@ -119,13 +150,13 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0 20px;
+            padding: 0 15px;
         }
 
         .logo-area {
             display: flex;
             align-items: center;
-            gap: 15px;
+            gap: 12px;
             text-decoration: none;
         }
 
@@ -147,7 +178,7 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
         nav ul {
             display: flex;
             list-style: none;
-            gap: 10px;
+            gap: 8px;
             align-items: center;
             flex-wrap: wrap;
         }
@@ -367,14 +398,16 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
             background: rgba(255,255,255,0.02);
             border: 1px solid rgba(255,255,255,0.08);
             margin-bottom: 10px;
+            padding: 8px;
         }
 
         .match-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 8px 12px;
+            padding: 6px 8px;
             border-bottom: 1px solid rgba(255,255,255,0.05);
+            gap: 8px;
         }
 
         .match-row:last-child {
@@ -383,14 +416,14 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
 
         .match-teams {
             font-weight: 700;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             color: var(--text-main);
         }
 
         .match-score {
             font-weight: 800;
             color: var(--gold-light);
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
 
         .sub-phase-title {
@@ -401,6 +434,81 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
             font-family: 'Raleway', sans-serif;
             font-weight: 700;
             text-align: center;
+        }
+
+        /* Admin Drag & Drop / Match Management styles */
+        .teams-palette {
+            background: #111;
+            border: 1px solid var(--gold-secondary);
+            padding: 12px;
+            margin-bottom: 25px;
+        }
+
+        .teams-palette h4 {
+            color: var(--gold-primary);
+            font-size: 0.9rem;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+
+        .palette-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .team-chip {
+            background: rgba(212, 175, 55, 0.15);
+            border: 1px solid var(--gold-secondary);
+            color: var(--gold-light);
+            padding: 6px 10px;
+            font-weight: 700;
+            font-size: 0.8rem;
+            cursor: grab;
+            user-select: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .team-chip:active {
+            cursor: grabbing;
+        }
+
+        .team-chip.selected {
+            background: var(--gold-primary);
+            color: #000;
+        }
+
+        .match-slot {
+            min-height: 36px;
+            background: rgba(0,0,0,0.6);
+            border: 1px dashed var(--gold-dark);
+            padding: 4px 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--text-main);
+            flex: 1;
+            cursor: pointer;
+        }
+
+        .match-slot.drag-over {
+            background: rgba(212, 175, 55, 0.2);
+            border-color: var(--gold-primary);
+        }
+
+        .score-input {
+            width: 40px;
+            background: #0d0d0d;
+            border: 1px solid var(--card-border);
+            color: var(--gold-light);
+            text-align: center;
+            font-weight: 800;
+            font-size: 0.85rem;
+            padding: 4px;
         }
 
         .admin-table-container {
@@ -619,6 +727,32 @@ app.post('/login', (req, res) => {
     }
 });
 
+app.post('/save-matches', (req, res) => {
+    if (!req.session.adminLogged) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const matchesData = req.body.matches;
+    if (!Array.isArray(matchesData)) return res.status(400).json({ success: false, error: 'Invalid data' });
+
+    db.serialize(() => {
+        db.run("BEGIN TRANSACTION");
+        const stmt = db.prepare(`UPDATE matches SET team1_id = ?, team2_id = ?, team1_score = ?, team2_score = ? WHERE phase = ? AND match_index = ?`);
+        matchesData.forEach(m => {
+            const t1 = (m.team1_id !== null && m.team1_id !== undefined && m.team1_id !== '') ? parseInt(m.team1_id) : null;
+            const t2 = (m.team2_id !== null && m.team2_id !== undefined && m.team2_id !== '') ? parseInt(m.team2_id) : null;
+            const s1 = parseInt(m.team1_score) || 0;
+            const s2 = parseInt(m.team2_score) || 0;
+            stmt.run(t1, t2, s1, s2, m.phase, m.match_index);
+        });
+        stmt.finalize();
+        db.run("COMMIT", (err) => {
+            if (err) {
+                res.json({ success: false, error: err.message });
+            } else {
+                res.json({ success: true });
+            }
+        });
+    });
+});
+
 app.post('/crud', (req, res) => {
     if (!req.session.adminLogged) return res.redirect('/?tab=login');
     const { crud_action, id, name, acronym, image, champion, runner_up, third_place, semifinalist } = req.body;
@@ -653,264 +787,440 @@ app.get('/', (req, res) => {
     const isAdmin = !!req.session.adminLogged;
 
     db.all("SELECT * FROM teams ORDER BY champion DESC, runner_up DESC, third_place DESC, semifinalist DESC, id ASC", (err, teams) => {
-        let body = '';
+        db.all("SELECT * FROM matches", (err, matches) => {
+            let body = '';
 
-        if (activeTab === 'home') {
-            let highlights = teams.slice(0, 4).map(team => {
-                const stars = team.champion > 0 ? '⭐'.repeat(team.champion) : '<span style="opacity:0">⭐</span>';
-                const gridHtml = team.champion > 0 
-                    ? `<div class="trophies-grid">
-                        <div class="trophy-item">🏆 <span class="count">${team.champion}</span></div>
-                        <div class="trophy-item">🥈 <span class="count">${team.runner_up}</span></div>
-                        <div class="trophy-item">🥉 <span class="count">${team.third_place}</span></div>
-                        <div class="trophy-item">🎖️ <span class="count">${team.semifinalist}</span></div>
-                       </div>`
-                    : `<div class="trophies-grid-3">
-                        <div class="trophy-item">🥈 <span class="count">${team.runner_up}</span></div>
-                        <div class="trophy-item">🥉 <span class="count">${team.third_place}</span></div>
-                        <div class="trophy-item">🎖️ <span class="count">${team.semifinalist}</span></div>
-                       </div>`;
+            // Helper to find match by phase and index
+            const getMatch = (phase, idx) => {
+                return matches.find(m => m.phase === phase && m.match_index === idx) || { team1_id: null, team2_id: null, team1_score: 0, team2_score: 0 };
+            };
 
-                return `<div class="team-card">
-                    <div class="team-img-container">
-                        <img src="${team.image}" alt="${team.name}">
-                        <span class="team-acronym">${team.acronym}</span>
-                    </div>
-                    <div class="team-info">
-                        <div>
-                            <div class="team-stars">${stars}</div>
-                            <div class="team-name">${team.name}</div>
+            const getTeamName = (id) => {
+                const t = teams.find(item => item.id == id);
+                return t ? t.acronym : 'TBD';
+            };
+
+            const getTeamFullName = (id) => {
+                const t = teams.find(item => item.id == id);
+                return t ? t.name : 'Aguardando';
+            };
+
+            if (activeTab === 'home') {
+                let highlights = teams.slice(0, 4).map(team => {
+                    const stars = team.champion > 0 ? '⭐'.repeat(team.champion) : '<span style="opacity:0">⭐</span>';
+                    const gridHtml = team.champion > 0 
+                        ? `<div class="trophies-grid">
+                            <div class="trophy-item">🏆 <span class="count">${team.champion}</span></div>
+                            <div class="trophy-item">🥈 <span class="count">${team.runner_up}</span></div>
+                            <div class="trophy-item">🥉 <span class="count">${team.third_place}</span></div>
+                            <div class="trophy-item">🎖️ <span class="count">${team.semifinalist}</span></div>
+                           </div>`
+                        : `<div class="trophies-grid-3">
+                            <div class="trophy-item">🥈 <span class="count">${team.runner_up}</span></div>
+                            <div class="trophy-item">🥉 <span class="count">${team.third_place}</span></div>
+                            <div class="trophy-item">🎖️ <span class="count">${team.semifinalist}</span></div>
+                           </div>`;
+
+                    return `<div class="team-card">
+                        <div class="team-img-container">
+                            <img src="${team.image}" alt="${team.name}">
+                            <span class="team-acronym">${team.acronym}</span>
                         </div>
-                        ${gridHtml}
-                    </div>
-                </div>`;
-            }).join('');
-
-            body = `<div class="hero-banner">
-                <h2>O Maior Campeonato Interescolar</h2>
-                <p>Bem-vindo ao quartel-general oficial da <strong>Pirata Cup</strong>! O torneio anual que consagra a glória, a garra e a honra dos colégios participantes.</p>
-                <a href="/?tab=edition2027" class="btn-gold">⚔️ Ver Edição 2027</a>
-            </div>
-            <h3 class="section-title">🏴‍☠️ Destaques das Equipes</h3>
-            <div class="grid-teams">${highlights}</div>`;
-
-        } else if (activeTab === 'teams') {
-            let allTeams = teams.map(team => {
-                const stars = team.champion > 0 ? '⭐'.repeat(team.champion) : '<span style="opacity:0">⭐</span>';
-                const gridHtml = team.champion > 0 
-                    ? `<div class="trophies-grid">
-                        <div class="trophy-item">🏆 <span class="count">${team.champion}</span></div>
-                        <div class="trophy-item">🥈 <span class="count">${team.runner_up}</span></div>
-                        <div class="trophy-item">🥉 <span class="count">${team.third_place}</span></div>
-                        <div class="trophy-item">🎖️ <span class="count">${team.semifinalist}</span></div>
-                       </div>`
-                    : `<div class="trophies-grid-3">
-                        <div class="trophy-item">🥈 <span class="count">${team.runner_up}</span></div>
-                        <div class="trophy-item">🥉 <span class="count">${team.third_place}</span></div>
-                        <div class="trophy-item">🎖️ <span class="count">${team.semifinalist}</span></div>
-                       </div>`;
-
-                return `<div class="team-card">
-                    <div class="team-img-container">
-                        <img src="${team.image}" alt="${team.name}">
-                        <span class="team-acronym">${team.acronym}</span>
-                    </div>
-                    <div class="team-info">
-                        <div>
-                            <div class="team-stars">${stars}</div>
-                            <div class="team-name">${team.name}</div>
+                        <div class="team-info">
+                            <div>
+                                <div class="team-stars">${stars}</div>
+                                <div class="team-name">${team.name}</div>
+                            </div>
+                            ${gridHtml}
                         </div>
-                        ${gridHtml}
+                    </div>`;
+                }).join('');
+
+                body = `<div class="hero-banner">
+                    <h2>O Maior Campeonato Interescolar</h2>
+                    <p>Bem-vindo ao quartel-general oficial da <strong>Pirata Cup</strong>! O torneio anual que consagra a glória, a garra e a honra dos colégios participantes.</p>
+                    <a href="/?tab=edition2027" class="btn-gold">⚔️ Ver Edição 2027</a>
+                </div>
+                <h3 class="section-title">🏴‍☠️ Destaques das Equipes</h3>
+                <div class="grid-teams">${highlights}</div>`;
+
+            } else if (activeTab === 'teams') {
+                let allTeams = teams.map(team => {
+                    const stars = team.champion > 0 ? '⭐'.repeat(team.champion) : '<span style="opacity:0">⭐</span>';
+                    const gridHtml = team.champion > 0 
+                        ? `<div class="trophies-grid">
+                            <div class="trophy-item">🏆 <span class="count">${team.champion}</span></div>
+                            <div class="trophy-item">🥈 <span class="count">${team.runner_up}</span></div>
+                            <div class="trophy-item">🥉 <span class="count">${team.third_place}</span></div>
+                            <div class="trophy-item">🎖️ <span class="count">${team.semifinalist}</span></div>
+                           </div>`
+                        : `<div class="trophies-grid-3">
+                            <div class="trophy-item">🥈 <span class="count">${team.runner_up}</span></div>
+                            <div class="trophy-item">🥉 <span class="count">${team.third_place}</span></div>
+                            <div class="trophy-item">🎖️ <span class="count">${team.semifinalist}</span></div>
+                           </div>`;
+
+                    return `<div class="team-card">
+                        <div class="team-img-container">
+                            <img src="${team.image}" alt="${team.name}">
+                            <span class="team-acronym">${team.acronym}</span>
+                        </div>
+                        <div class="team-info">
+                            <div>
+                                <div class="team-stars">${stars}</div>
+                                <div class="team-name">${team.name}</div>
+                            </div>
+                            ${gridHtml}
+                        </div>
+                    </div>`;
+                }).join('');
+
+                body = `<h3 class="section-title">🛡️ Equipes</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 20px;">Todas as equipes cadastradas no hall da fama da Pirata Cup.</p>
+                <div class="grid-teams">${allTeams}</div>`;
+
+            } else if (activeTab === 'edition2027') {
+                // Render Edition 2027 with Admin match management or read-only view
+                let teamsJson = JSON.stringify(teams);
+
+                // Helper renderer for match box
+                const renderMatchBox = (phase, idx, labelTitle) => {
+                    const m = getMatch(phase, idx);
+                    const t1Name = getTeamName(m.team1_id);
+                    const t2Name = getTeamName(m.team2_id);
+
+                    if (isAdmin) {
+                        return `<div class="match-box" data-phase="${phase}" data-match-index="${idx}">
+                            <div style="font-size: 0.75rem; color: var(--gold-light); padding: 4px 8px; background: rgba(212,175,55,0.08);">${labelTitle}</div>
+                            <div class="match-row">
+                                <div class="match-slot" data-slot="1" data-team-id="${m.team1_id || ''}" ondragover="allowDrop(event)" ondragleave="removeDragOver(event)" ondrop="dropTeam(event, '${phase}', ${idx}, 1)" onclick="selectSlotForClick(this, '${phase}', ${idx}, 1)">
+                                    <span>${t1Name}</span>
+                                </div>
+                                <input type="number" min="0" class="score-input" value="${m.team1_score}" data-score="1" onchange="markDirty()">
+                                <span style="font-weight:800; color:var(--text-muted);">X</span>
+                                <input type="number" min="0" class="score-input" value="${m.team2_score}" data-score="2" onchange="markDirty()">
+                                <div class="match-slot" data-slot="2" data-team-id="${m.team2_id || ''}" ondragover="allowDrop(event)" ondragleave="removeDragOver(event)" ondrop="dropTeam(event, '${phase}', ${idx}, 2)" onclick="selectSlotForClick(this, '${phase}', ${idx}, 2)">
+                                    <span>${t2Name}</span>
+                                </div>
+                            </div>
+                            <div style="text-align: right; padding: 2px 6px;">
+                                <button type="button" onclick="clearMatchSlot('${phase}', ${idx})" style="background:none; border:none; color:var(--accent-red); font-size:0.7rem; cursor:pointer; font-weight:700;">Limpar Partida</button>
+                            </div>
+                        </div>`;
+                    } else {
+                        return `<div class="match-box">
+                            <div style="font-size: 0.75rem; color: var(--gold-light); padding: 4px 8px; background: rgba(212,175,55,0.08);">${labelTitle}</div>
+                            <div class="match-row">
+                                <span class="match-teams">${t1Name} (${getTeamFullName(m.team1_id)})</span>
+                                <span class="match-score">${m.team1_score} - ${m.team2_score}</span>
+                                <span class="match-teams">${t2Name} (${getTeamFullName(m.team2_id)})</span>
+                            </div>
+                        </div>`;
+                    }
+                };
+
+                let adminControlsHtml = '';
+                if (isAdmin) {
+                    let paletteChips = teams.map(t => 
+                        `<div class="team-chip" draggable="true" ondragstart="dragTeam(event, ${t.id})" onclick="clickTeamPalette(${t.id}, '${t.acronym}')">
+                            🛡️ ${t.acronym} - ${t.name}
+                        </div>`
+                    ).join('');
+
+                    adminControlsHtml = `
+                    <div style="background: rgba(212,175,55,0.08); border: 1px solid var(--gold-secondary); padding: 20px; margin-bottom: 25px;">
+                        <h3 style="color: var(--gold-primary); margin-bottom: 10px; font-size: 1.1rem;">🛠️ Painel de Gerenciamento da Edição 2027</h3>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">
+                            Arraste as siglas das equipes (ou clique na equipe e depois no quadrado da partida) para formar os confrontos. O mesmo time pode jogar em rodadas diferentes, mas não contra si mesmo na mesma partida.
+                        </p>
+                        
+                        <div class="teams-palette">
+                            <h4>Equipes Disponíveis (Arraste ou Clique):</h4>
+                            <div class="palette-chips">${paletteChips}</div>
+                        </div>
+
+                        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                            <button type="button" class="btn-gold" onclick="saveMatches()">💾 Salvar Alterações das Partidas</button>
+                            <span id="save-status" style="font-size: 0.85rem; font-weight: 700; color: var(--accent-green);"></span>
+                        </div>
+                    </div>`;
+                }
+
+                body = `<div class="hero-banner" style="text-align: center; padding: 25px;">
+                    <img src="https://raw.githubusercontent.com/Erriaga/piratacup/refs/heads/main/piratacup.png" width="80px" alt="Pirata Cup">
+                    <h2 style="color: #e67e22; font-size: 2.2rem; font-weight: 900; margin-top: 10px;">EDIÇÃO 2027</h2>
+                    <p style="margin-top: 10px;">Confrontos oficiais do Sistema Suíço e Fases Finais.</p>
+                </div>
+
+                ${adminControlsHtml}
+
+                <div class="sub-phase-title">FASE SUÍÇA</div>
+                <div class="swiss-container">
+                    <div class="swiss-card">
+                        <h3>Rodada 1 (0-0)</h3>
+                        ${renderMatchBox('swiss_r1', 0, 'Partida 1')}
+                        ${renderMatchBox('swiss_r1', 1, 'Partida 2')}
+                        ${renderMatchBox('swiss_r1', 2, 'Partida 3')}
+                        ${renderMatchBox('swiss_r1', 3, 'Partida 4')}
                     </div>
+
+                    <div class="swiss-card">
+                        <h3>Rodada 2 (1-0 & 0-1)</h3>
+                        <div style="font-size:0.75rem; color:var(--gold-secondary); margin-bottom:6px; font-weight:700;">Chave 1-0 (Vencedores R1)</div>
+                        ${renderMatchBox('swiss_r2', 0, 'Jogo 1-0 #1')}
+                        ${renderMatchBox('swiss_r2', 1, 'Jogo 1-0 #2')}
+                        <div style="font-size:0.75rem; color:var(--gold-secondary); margin: 10px 0 6px 0; font-weight:700;">Chave 0-1 (Perdedores R1)</div>
+                        ${renderMatchBox('swiss_r2', 2, 'Jogo 0-1 #1')}
+                        ${renderMatchBox('swiss_r2', 3, 'Jogo 0-1 #2')}
+                    </div>
+
+                    <div class="swiss-card">
+                        <h3>Rodada 3 (1-1)</h3>
+                        ${renderMatchBox('swiss_r3', 0, 'Confronto Decisivo 1')}
+                        ${renderMatchBox('swiss_r3', 1, 'Confronto Decisivo 2')}
+                    </div>
+                </div>
+
+                <div class="sub-phase-title">FASE FINAL</div>
+                <div class="swiss-container">
+                    <div class="swiss-card">
+                        <h3>Semifinais</h3>
+                        ${renderMatchBox('playoffs_semi', 0, 'Semifinal 1')}
+                        ${renderMatchBox('playoffs_semi', 1, 'Semifinal 2')}
+                    </div>
+
+                    <div class="swiss-card">
+                        <h3>Terceiro Lugar</h3>
+                        ${renderMatchBox('playoffs_third', 0, 'Disputa 3º Lugar')}
+                    </div>
+
+                    <div class="swiss-card">
+                        <h3>Final</h3>
+                        ${renderMatchBox('playoffs_final', 0, 'Grande Final')}
+                    </div>
+                </div>
+
+                ${isAdmin ? `
+                <script>
+                    const allTeamsData = ${teamsJson};
+                    let selectedTeamForClick = null;
+
+                    function dragTeam(e, teamId) {
+                        e.dataTransfer.setData('text/plain', teamId);
+                    }
+
+                    function allowDrop(e) {
+                        e.preventDefault();
+                        e.currentTarget.classList.add('drag-over');
+                    }
+
+                    function removeDragOver(e) {
+                        e.currentTarget.classList.remove('drag-over');
+                    }
+
+                    function dropTeam(e, phase, matchIndex, slotNum) {
+                        e.preventDefault();
+                        e.currentTarget.classList.remove('drag-over');
+                        const teamId = e.dataTransfer.getData('text/plain');
+                        if (teamId) {
+                            assignTeam(phase, matchIndex, slotNum, teamId);
+                        }
+                    }
+
+                    function clickTeamPalette(teamId, acronym) {
+                        selectedTeamForClick = { id: teamId, acronym: acronym };
+                        document.querySelectorAll('.team-chip').forEach(c => c.classList.remove('selected'));
+                        event.currentTarget.classList.add('selected');
+                    }
+
+                    function selectSlotForClick(slotElem, phase, matchIndex, slotNum) {
+                        if (selectedTeamForClick) {
+                            assignTeam(phase, matchIndex, slotNum, selectedTeamForClick.id);
+                            selectedTeamForClick = null;
+                            document.querySelectorAll('.team-chip').forEach(c => c.classList.remove('selected'));
+                        }
+                    }
+
+                    function assignTeam(phase, matchIndex, slotNum, teamId) {
+                        const matchBox = document.querySelector(\`.match-box[data-phase="\${phase}"][data-match-index="\${matchIndex}"]\`);
+                        if (!matchBox) return;
+
+                        const slot1 = matchBox.querySelector('.match-slot[data-slot="1"]');
+                        const slot2 = matchBox.querySelector('.match-slot[data-slot="2"]');
+
+                        const otherSlotNum = slotNum === 1 ? 2 : 1;
+                        const otherSlot = matchBox.querySelector(\`.match-slot[data-slot="\${otherSlotNum}"]\`);
+
+                        if (otherSlot && otherSlot.getAttribute('data-team-id') == teamId) {
+                            showStatus('Uma equipe não pode jogar contra si mesma na mesma partida!', true);
+                            return;
+                        }
+
+                        const targetSlot = slotNum === 1 ? slot1 : slot2;
+                        const teamObj = allTeamsData.find(t => t.id == teamId);
+                        if (!teamObj) return;
+
+                        targetSlot.setAttribute('data-team-id', teamObj.id);
+                        targetSlot.querySelector('span').innerText = teamObj.acronym;
+                        markDirty();
+                    }
+
+                    function clearMatchSlot(phase, matchIndex) {
+                        const matchBox = document.querySelector(\`.match-box[data-phase="\${phase}"][data-match-index="\${matchIndex}"]\`);
+                        if (!matchBox) return;
+                        matchBox.querySelectorAll('.match-slot').forEach(s => {
+                            s.setAttribute('data-team-id', '');
+                            s.querySelector('span').innerText = 'TBD';
+                        });
+                        matchBox.querySelectorAll('.score-input').forEach(i => i.value = '0');
+                        markDirty();
+                    }
+
+                    function markDirty() {
+                        const status = document.getElementById('save-status');
+                        status.style.color = '#e74c3c';
+                        status.innerText = '⚠️ Alterações não salvas!';
+                    }
+
+                    function showStatus(msg, isError = false) {
+                        const status = document.getElementById('save-status');
+                        status.style.color = isError ? '#e74c3c' : '#2ecc71';
+                        status.innerText = msg;
+                    }
+
+                    function saveMatches() {
+                        const matchBoxes = document.querySelectorAll('.match-box[data-phase]');
+                        const matchesPayload = [];
+
+                        matchBoxes.forEach(box => {
+                            const phase = box.getAttribute('data-phase');
+                            const matchIndex = parseInt(box.getAttribute('data-match-index'));
+                            const slot1 = box.querySelector('.match-slot[data-slot="1"]');
+                            const slot2 = box.querySelector('.match-slot[data-slot="2"]');
+                            const scoreInputs = box.querySelectorAll('.score-input');
+
+                            matchesPayload.push({
+                                phase: phase,
+                                match_index: matchIndex,
+                                team1_id: slot1.getAttribute('data-team-id') || null,
+                                team2_id: slot2.getAttribute('data-team-id') || null,
+                                team1_score: parseInt(scoreInputs[0].value) || 0,
+                                team2_score: parseInt(scoreInputs[1].value) || 0
+                            });
+                        });
+
+                        fetch('/save-matches', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ matches: matchesPayload })
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.success) {
+                                showStatus('✅ Partidas salvas com sucesso!');
+                                setTimeout(() => location.reload(), 1000);
+                            } else {
+                                showStatus('❌ Erro ao salvar partidas: ' + data.error, true);
+                            }
+                        })
+                        .catch(err => {
+                            showStatus('❌ Erro de conexão!', true);
+                        });
+                    }
+                </script>
+                ` : ''}`;
+
+            } else if (activeTab === 'login') {
+                body = `<div class="login-box">
+                    <h2 style="color: #d4af37; text-align: center; font-size: 1.3rem;">ACESSO ADMINISTRATIVO</h2><br>
+                    <form method="POST" action="/login">
+                        <div class="form-group" style="text-align: center;"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
+                        <div class="form-group" style="text-align: center;"><label>Senha</label><input type="password" name="password" class="form-control" style="text-align: center;" required></div>
+                        <button type="submit" class="btn-gold" style="width: 100%; margin-top: 10px;">Entrar no Navio</button>
+                    </form>
                 </div>`;
-            }).join('');
 
-            body = `<h3 class="section-title">🛡️ Equipes</h3>
-            <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 20px;">Todas as equipes cadastradas no hall da fama da Pirata Cup.</p>
-            <div class="grid-teams">${allTeams}</div>`;
+            } else if (activeTab === 'admin') {
+                if (!isAdmin) return res.redirect('/?tab=login');
 
-        } else if (activeTab === 'edition2027') {
-            body = `<div class="hero-banner" style="text-align: center; padding: 25px;">
-                <img src="https://raw.githubusercontent.com/Erriaga/piratacup/refs/heads/main/piratacup.png" width="80px" alt="Pirata Cup">
-                <h2 style="color: #e67e22; font-size: 2.5rem; font-weight: 900; margin-top: 10px;">EDIÇÃO 2027</h2>
-            </div>
+                const editId = req.query.edit;
+                let editTeam = null;
+                if (editId) {
+                    editTeam = teams.find(t => t.id == editId);
+                }
 
-            <div class="sub-phase-title">FASE SUÍÇA</div>
-            <div class="swiss-container">
-                <div class="swiss-card">
-                    <h3>Rodada 1</h3>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
+                let rows = teams.map(t => `<tr>
+                    <td><strong>${t.acronym}</strong></td>
+                    <td>${t.name}</td>
+                    <td>${t.champion}</td>
+                    <td>${t.runner_up}</td>
+                    <td>${t.third_place}</td>
+                    <td>${t.semifinalist}</td>
+                    <td>
+                        <a href="/?tab=admin&edit=${t.id}" class="btn-edit">Editar</a>
+                        <form method="POST" action="/crud" style="display:inline;">
+                            <input type="hidden" name="crud_action" value="delete">
+                            <input type="hidden" name="id" value="${t.id}">
+                            <button type="submit" class="btn-danger">Excluir</button>
+                        </form>
+                    </td>
+                </tr>`).join('');
+
+                body = `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+                    <h3 class="section-title" style="margin-bottom: 0; border: none;">⚓ Painel de Controle - ${req.session.adminUser}</h3>
                 </div>
 
-                <div class="swiss-card">
-                    <h3>Rodada 2</h3>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
+                <div class="swiss-card" style="margin-bottom: 30px;">
+                    <h3 style="margin-bottom: 15px; text-align: left;">${editTeam ? '✏️ Editar Equipe' : '➕ Cadastrar Nova Equipe'}</h3>
+                    <form method="POST" action="/crud">
+                        <input type="hidden" name="crud_action" value="${editTeam ? 'update' : 'create'}">
+                        ${editTeam ? `<input type="hidden" name="id" value="${editTeam.id}">` : ''}
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Nome do Colégio:</label>
+                                <input type="text" name="name" class="form-control" required value="${editTeam ? editTeam.name : ''}" placeholder="Ex: Colégio Naval">
+                            </div>
+                            <div class="form-group">
+                                <label>Sigla (Máx 4 chars):</label>
+                                <input type="text" name="acronym" class="form-control" maxlength="4" required value="${editTeam ? editTeam.acronym : ''}" placeholder="CNAV">
+                            </div>
+                            <div class="form-group">
+                                <label>URL da Imagem:</label>
+                                <input type="url" name="image" class="form-control" required value="${editTeam ? editTeam.image : 'https://images.unsplash.com/photo-1541339907198-e08756dedf3f?w=300&auto=format&fit=crop&q=80'}">
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Histórico de Conquistas:</label>
+                            <div class="trophies-input-row">
+                                <div><label style="font-size:0.75rem; color:var(--text-muted);">🥇 Campeão</label><input type="number" name="champion" min="0" class="form-control" value="${editTeam ? editTeam.champion : 0}"></div>
+                                <div><label style="font-size:0.75rem; color:var(--text-muted);">🥈 Vice</label><input type="number" name="runner_up" min="0" class="form-control" value="${editTeam ? editTeam.runner_up : 0}"></div>
+                                <div><label style="font-size:0.75rem; color:var(--text-muted);">🥉 3º Lugar</label><input type="number" name="third_place" min="0" class="form-control" value="${editTeam ? editTeam.third_place : 0}"></div>
+                                <div><label style="font-size:0.75rem; color:var(--text-muted);">🎖️ Semi</label><input type="number" name="semifinalist" min="0" class="form-control" value="${editTeam ? editTeam.semifinalist : 0}"></div>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 15px; margin-top: 15px; flex-wrap: wrap;">
+                            <button type="submit" class="btn-gold">${editTeam ? 'Salvar Alterações' : 'Cadastrar Equipe'}</button>
+                            ${editTeam ? `<a href="/?tab=admin" class="btn-gold" style="background: transparent; border: 1px solid var(--gold-secondary); color: var(--gold-primary);">Cancelar</a>` : ''}
+                        </div>
+                    </form>
                 </div>
 
-                <div class="swiss-card">
-                    <h3>Rodada 3</h3>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="sub-phase-title">FASE FINAL</div>
-            <div class="swiss-container">
-                <div class="swiss-card">
-                    <h3>Semifinais</h3>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                </div>
-
-                <div class="swiss-card">
-                    <h3>Terceiro Lugar</h3>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                </div>
-
-                <div class="swiss-card">
-                    <h3>Final</h3>
-                    <div class="match-box">
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                        <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
-                    </div>
-                </div>
-            </div>`;
-
-        } else if (activeTab === 'login') {
-            body = `<div class="login-box">
-                <h2 style="color: #d4af37; text-align: center; font-size: 1.3rem;">ACESSO ADMINISTRATIVO</h2><br>
-                <form method="POST" action="/login">
-                    <div class="form-group" style="text-align: center;"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
-                    <div class="form-group" style="text-align: center;"><label>Senha</label><input type="password" name="password" class="form-control" style="text-align: center;" required></div>
-                    <button type="submit" class="btn-gold" style="width: 100%; margin-top: 10px;">Entrar no Navio</button>
-                </form>
-            </div>`;
-
-        } else if (activeTab === 'admin') {
-            if (!isAdmin) return res.redirect('/?tab=login');
-
-            const editId = req.query.edit;
-            let editTeam = null;
-            if (editId) {
-                editTeam = teams.find(t => t.id == editId);
+                <h3 class="section-title">📋 Gerenciamento de Equipes</h3>
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr><th>Sigla</th><th>Colégio</th><th>🥇 Camp.</th><th>🥈 Vice</th><th>🥉 3º</th><th>🎖️ Semi</th><th>Ações</th></tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>`;
             }
 
-            let rows = teams.map(t => `<tr>
-                <td><strong>${t.acronym}</strong></td>
-                <td>${t.name}</td>
-                <td>${t.champion}</td>
-                <td>${t.runner_up}</td>
-                <td>${t.third_place}</td>
-                <td>${t.semifinalist}</td>
-                <td>
-                    <a href="/?tab=admin&edit=${t.id}" class="btn-edit">Editar</a>
-                    <form method="POST" action="/crud" style="display:inline;">
-                        <input type="hidden" name="crud_action" value="delete">
-                        <input type="hidden" name="id" value="${t.id}">
-                        <button type="submit" class="btn-danger">Excluir</button>
-                    </form>
-                </td>
-            </tr>`).join('');
-
-            body = `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
-                <h3 class="section-title" style="margin-bottom: 0; border: none;">⚓ Painel de Controle - ${req.session.adminUser}</h3>
-            </div>
-
-            <div class="swiss-card" style="margin-bottom: 30px;">
-                <h3 style="margin-bottom: 15px; text-align: left;">${editTeam ? '✏️ Editar Equipe' : '➕ Cadastrar Nova Equipe'}</h3>
-                <form method="POST" action="/crud">
-                    <input type="hidden" name="crud_action" value="${editTeam ? 'update' : 'create'}">
-                    ${editTeam ? `<input type="hidden" name="id" value="${editTeam.id}">` : ''}
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Nome do Colégio:</label>
-                            <input type="text" name="name" class="form-control" required value="${editTeam ? editTeam.name : ''}" placeholder="Ex: Colégio Naval">
-                        </div>
-                        <div class="form-group">
-                            <label>Sigla (Máx 4 chars):</label>
-                            <input type="text" name="acronym" class="form-control" maxlength="4" required value="${editTeam ? editTeam.acronym : ''}" placeholder="CNAV">
-                        </div>
-                        <div class="form-group">
-                            <label>URL da Imagem:</label>
-                            <input type="url" name="image" class="form-control" required value="${editTeam ? editTeam.image : 'https://images.unsplash.com/photo-1541339907198-e08756dedf3f?w=300&auto=format&fit=crop&q=80'}">
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Histórico de Conquistas:</label>
-                        <div class="trophies-input-row">
-                            <div><label style="font-size:0.75rem; color:var(--text-muted);">🥇 Campeão</label><input type="number" name="champion" min="0" class="form-control" value="${editTeam ? editTeam.champion : 0}"></div>
-                            <div><label style="font-size:0.75rem; color:var(--text-muted);">🥈 Vice</label><input type="number" name="runner_up" min="0" class="form-control" value="${editTeam ? editTeam.runner_up : 0}"></div>
-                            <div><label style="font-size:0.75rem; color:var(--text-muted);">🥉 3º Lugar</label><input type="number" name="third_place" min="0" class="form-control" value="${editTeam ? editTeam.third_place : 0}"></div>
-                            <div><label style="font-size:0.75rem; color:var(--text-muted);">🎖️ Semi</label><input type="number" name="semifinalist" min="0" class="form-control" value="${editTeam ? editTeam.semifinalist : 0}"></div>
-                        </div>
-                    </div>
-
-                    <div style="display: flex; gap: 15px; margin-top: 15px; flex-wrap: wrap;">
-                        <button type="submit" class="btn-gold">${editTeam ? 'Salvar Alterações' : 'Cadastrar Equipe'}</button>
-                        ${editTeam ? `<a href="/?tab=admin" class="btn-gold" style="background: transparent; border: 1px solid var(--gold-secondary); color: var(--gold-primary);">Cancelar</a>` : ''}
-                    </div>
-                </form>
-            </div>
-
-            <h3 class="section-title">📋 Gerenciamento de Equipes</h3>
-            <div class="admin-table-container">
-                <table class="admin-table">
-                    <thead>
-                        <tr><th>Sigla</th><th>Colégio</th><th>🥇 Camp.</th><th>🥈 Vice</th><th>🥉 3º</th><th>🎖️ Semi</th><th>Ações</th></tr>
-                    </thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            </div>`;
-        }
-
-        res.send(renderLayout(activeTab, { body, isAdmin }));
+            res.send(renderLayout(activeTab, { body, isAdmin }));
+        });
     });
 });
 
