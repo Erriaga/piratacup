@@ -512,7 +512,7 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
         }
 
         .pen-inputs {
-            display: none;
+            display: flex;
             align-items: center;
             gap: 4px;
             font-size: 0.75rem;
@@ -521,10 +521,6 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
             justify-content: center;
             background: rgba(212,175,55,0.05);
             padding: 4px;
-        }
-
-        .pen-inputs.active {
-            display: flex;
         }
 
         .admin-table-container {
@@ -749,24 +745,46 @@ app.post('/save-matches', (req, res) => {
     if (!Array.isArray(matchesData)) return res.status(400).json({ success: false, error: 'Invalid data' });
 
     db.serialize(() => {
-        db.run("BEGIN TRANSACTION");
-        const stmt = db.prepare(`UPDATE matches SET team1_id = ?, team2_id = ?, team1_score = ?, team2_score = ?, team1_pen = ?, team2_pen = ? WHERE phase = ? AND match_index = ?`);
-        matchesData.forEach(m => {
-            const t1 = (m.team1_id !== null && m.team1_id !== undefined && m.team1_id !== '') ? parseInt(m.team1_id) : null;
-            const t2 = (m.team2_id !== null && m.team2_id !== undefined && m.team2_id !== '') ? parseInt(m.team2_id) : null;
-            const s1 = parseInt(m.team1_score) || 0;
-            const s2 = parseInt(m.team2_score) || 0;
-            const p1 = (m.team1_pen !== null && m.team1_pen !== undefined && m.team1_pen !== '') ? parseInt(m.team1_pen) : null;
-            const p2 = (m.team2_pen !== null && m.team2_pen !== undefined && m.team2_pen !== '') ? parseInt(m.team2_pen) : null;
-            stmt.run(t1, t2, s1, s2, p1, p2, m.phase, m.match_index);
-        });
-        stmt.finalize();
-        db.run("COMMIT", (err) => {
-            if (err) {
-                res.json({ success: false, error: err.message });
-            } else {
-                res.json({ success: true });
+        db.run("BEGIN TRANSACTION", (errBegin) => {
+            if (errBegin) {
+                return res.json({ success: false, error: errBegin.message });
             }
+
+            const stmt = db.prepare(`UPDATE matches SET team1_id = ?, team2_id = ?, team1_score = ?, team2_score = ?, team1_pen = ?, team2_pen = ? WHERE phase = ? AND match_index = ?`);
+            let completed = 0;
+            let hasError = false;
+
+            matchesData.forEach(m => {
+                const t1 = (m.team1_id !== null && m.team1_id !== undefined && m.team1_id !== '') ? parseInt(m.team1_id) : null;
+                const t2 = (m.team2_id !== null && m.team2_id !== undefined && m.team2_id !== '') ? parseInt(m.team2_id) : null;
+                const s1 = parseInt(m.team1_score) || 0;
+                const s2 = parseInt(m.team2_score) || 0;
+                const p1 = (m.team1_pen !== null && m.team1_pen !== undefined && m.team1_pen !== '') ? parseInt(m.team1_pen) : null;
+                const p2 = (m.team2_pen !== null && m.team2_pen !== undefined && m.team2_pen !== '') ? parseInt(m.team2_pen) : null;
+
+                stmt.run(t1, t2, s1, s2, p1, p2, m.phase, m.match_index, (errRun) => {
+                    if (errRun) hasError = true;
+                    completed++;
+
+                    if (completed === matchesData.length) {
+                        stmt.finalize(() => {
+                            if (hasError) {
+                                db.run("ROLLBACK", () => {
+                                    res.json({ success: false, error: "Erro ao atualizar partidas no banco." });
+                                });
+                            } else {
+                                db.run("COMMIT", (errCommit) => {
+                                    if (errCommit) {
+                                        res.json({ success: false, error: errCommit.message });
+                                    } else {
+                                        res.json({ success: true });
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+            });
         });
     });
 });
@@ -903,7 +921,6 @@ app.get('/', (req, res) => {
                     const m = getMatch(phase, idx);
                     const t1Name = getTeamName(m.team1_id);
                     const t2Name = getTeamName(m.team2_id);
-                    const isTied = (m.team1_score !== null && m.team2_score !== null && m.team1_score === m.team2_score && (m.team1_score > 0 || m.team2_score >= 0));
 
                     if (isAdmin) {
                         return `<div class="match-box" data-phase="${phase}" data-match-index="${idx}">
@@ -912,14 +929,14 @@ app.get('/', (req, res) => {
                                 <div class="match-slot" data-slot="1" data-team-id="${m.team1_id || ''}" ondragover="allowDrop(event)" ondragleave="removeDragOver(event)" ondrop="dropTeam(event, '${phase}', ${idx}, 1)" onclick="selectSlotForClick(this, '${phase}', ${idx}, 1)">
                                     <span>${t1Name}</span>
                                 </div>
-                                <input type="number" min="0" class="score-input" value="${m.team1_score}" data-score="1" onchange="checkTie(this)">
+                                <input type="number" min="0" class="score-input" value="${m.team1_score}" data-score="1" onchange="markDirty()">
                                 <span style="font-weight:800; color:var(--text-muted);">X</span>
-                                <input type="number" min="0" class="score-input" value="${m.team2_score}" data-score="2" onchange="checkTie(this)">
+                                <input type="number" min="0" class="score-input" value="${m.team2_score}" data-score="2" onchange="markDirty()">
                                 <div class="match-slot" data-slot="2" data-team-id="${m.team2_id || ''}" ondragover="allowDrop(event)" ondragleave="removeDragOver(event)" ondrop="dropTeam(event, '${phase}', ${idx}, 2)" onclick="selectSlotForClick(this, '${phase}', ${idx}, 2)">
                                     <span>${t2Name}</span>
                                 </div>
                             </div>
-                            <div class="pen-inputs ${isTied ? 'active' : ''}">
+                            <div class="pen-inputs">
                                 <span>Pênaltis:</span>
                                 <input type="number" min="0" class="score-input pen-input-1" value="${m.team1_pen !== null ? m.team1_pen : ''}" placeholder="P1" onchange="markDirty()">
                                 <span>-</span>
@@ -957,7 +974,7 @@ app.get('/', (req, res) => {
                     <div style="background: rgba(212,175,55,0.08); border: 1px solid var(--gold-secondary); padding: 20px; margin-bottom: 25px;">
                         <h3 style="color: var(--gold-primary); margin-bottom: 10px; font-size: 1.1rem;">🛠️ Painel de Gerenciamento da Edição 2027</h3>
                         <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">
-                            Arraste as siglas das equipes (ou clique na equipe e depois no quadrado da partida) para formar os confrontos. O mesmo time pode jogar em rodadas diferentes, mas não contra si mesmo na mesma partida. Em caso de empate, insira o placar dos pênaltis.
+                            Arraste as siglas das equipes (ou clique na equipe e depois no quadrado da partida) para formar os confrontos. O mesmo time pode jogar em rodadas diferentes, mas não contra si mesmo na mesma partida. Insira o placar dos pênaltis quando necessário.
                         </p>
                         
                         <div class="teams-palette">
@@ -1028,7 +1045,7 @@ app.get('/', (req, res) => {
 
                 ${isAdmin ? `
                 <script>
-                    const allTeamsData = ${teamsJson};
+                    const allTeamsData = \${teamsJson};
                     let selectedTeamForClick = null;
 
                     function dragTeam(e, teamId) {
@@ -1091,21 +1108,6 @@ app.get('/', (req, res) => {
                         markDirty();
                     }
 
-                    function checkTie(inputElem) {
-                        const matchBox = inputElem.closest('.match-box');
-                        const scoreInputs = matchBox.querySelectorAll('.score-input');
-                        const s1 = parseInt(scoreInputs[0].value) || 0;
-                        const s2 = parseInt(scoreInputs[1].value) || 0;
-                        const penContainer = matchBox.querySelector('.pen-inputs');
-
-                        if (s1 === s2 && (scoreInputs[0].value !== '' && scoreInputs[1].value !== '')) {
-                            penContainer.classList.add('active');
-                        } else {
-                            penContainer.classList.remove('active');
-                        }
-                        markDirty();
-                    }
-
                     function clearMatchSlot(phase, matchIndex) {
                         const matchBox = document.querySelector(\`.match-box[data-phase="\${phase}"][data-match-index="\${matchIndex}"]\`);
                         if (!matchBox) return;
@@ -1114,7 +1116,6 @@ app.get('/', (req, res) => {
                             s.querySelector('span').innerText = 'TBD';
                         });
                         matchBox.querySelectorAll('.score-input').forEach(i => i.value = '0');
-                        matchBox.querySelector('.pen-inputs').classList.remove('active');
                         matchBox.querySelectorAll('.pen-inputs input').forEach(i => i.value = '');
                         markDirty();
                     }
@@ -1221,7 +1222,7 @@ app.get('/', (req, res) => {
                     <h3 style="margin-bottom: 15px; text-align: left;">${editTeam ? '✏️ Editar Equipe' : '➕ Cadastrar Nova Equipe'}</h3>
                     <form method="POST" action="/crud">
                         <input type="hidden" name="crud_action" value="${editTeam ? 'update' : 'create'}">
-                        ${editTeam ? `<input type="hidden" name="id" value="${editTeam.id}">` : ''}
+                        ${editTeam ? `<input type="hidden" name="id" value="\${editTeam.id}">` : ''}
 
                         <div class="form-row">
                             <div class="form-group">
