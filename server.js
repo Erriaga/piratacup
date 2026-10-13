@@ -571,7 +571,7 @@ app.post('/login', (req, res) => {
     } else {
         db.all("SELECT * FROM teams", (err, teams) => {
             const body = `<div class="login-box">
-                <h2>🔐 Acesso Administrativo</h2>
+                <h2>🔐 Acesso Administrativo</h2><br>
                 <div class="alert alert-error">Credenciais inválidas!</div>
                 <form method="POST" action="/login">
                     <div class="form-group" style="text-align: center;"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
@@ -691,18 +691,19 @@ app.get('/', (req, res) => {
             }).join('');
 
             body = `<h3 class="section-title">🛡️ Equipes</h3>
-            <p style="margin-bottom: 25px; color: var(--text-muted); line-height: 1.6;">Todas as equipes cadastradas no hall da fama da Pirata Cup.</p>
+            <p style="color: var(--text-muted); line-height: 1.6;">Todas as equipes cadastradas no hall da fama da Pirata Cup.</p>
             <div class="grid-teams">${allTeams}</div>`;
 
         } else if (activeTab === 'edition2027') {
             body = `<div class="hero-banner" style="text-align: center; padding: 25px;">
-                <h2 style="color: #e67e22; font-size: 2.2rem; font-weight: 900;">EDIÇÃO 2027</h2>
+                <img src="https://raw.githubusercontent.com/Erriaga/piratacup/refs/heads/main/piratacup.png" width="100px">
+                <h2 style="color: #e67e22; font-size: 5rem; font-weight: 900;">EDIÇÃO 2027</h2>
             </div>
 
             <div class="sub-phase-title" style="text-align: center;">FASE SUÍÇA</div>
             <div class="swiss-container">
                 <div class="swiss-card">
-                    <h3>⚓ Rodada 1</h3>
+                    <h3>Rodada 1</h3>
                     <div class="match-box">
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
@@ -722,7 +723,7 @@ app.get('/', (req, res) => {
                 </div>
 
                 <div class="swiss-card">
-                    <h3>⚓ Rodada 2</h3>
+                    <h3>Rodada 2</h3>
                     <div class="match-box">
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
@@ -742,7 +743,7 @@ app.get('/', (req, res) => {
                 </div>
 
                 <div class="swiss-card">
-                    <h3>⚓ Rodada 3</h3>
+                    <h3>Rodada 3</h3>
                     <div class="match-box">
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
@@ -757,7 +758,7 @@ app.get('/', (req, res) => {
             <div class="sub-phase-title" style="text-align: center;">FASE FINAL</div>
             <div class="swiss-container">
                 <div class="swiss-card">
-                    <h3>⚓ Semifinais</h3>
+                    <h3>Semifinais</h3>
                     <div class="match-box">
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
@@ -769,7 +770,7 @@ app.get('/', (req, res) => {
                 </div>
 
                 <div class="swiss-card">
-                    <h3>⚓ Terceiro Lugar</h3>
+                    <h3>Terceiro Lugar</h3>
                     <div class="match-box">
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
@@ -777,7 +778,7 @@ app.get('/', (req, res) => {
                 </div>
 
                 <div class="swiss-card">
-                    <h3>⚓ Final</h3>
+                    <h3>Final</h3>
                     <div class="match-box">
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
                         <div class="match-row"><span class="match-teams">TBD</span><span class="match-score">-</span></div>
@@ -787,7 +788,7 @@ app.get('/', (req, res) => {
 
         } else if (activeTab === 'login') {
             body = `<div class="login-box">
-                <h2>🔐 Acesso Administrativo</h2>
+                <h2>🔐 Acesso Administrativo</h2><br>
                 <form method="POST" action="/login">
                     <div class="form-group" style="text-align: center;"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
                     <div class="form-group" style="text-align: center;"><label>Senha</label><input type="password" name="password" class="form-control" style="text-align: center;" required></div>
