@@ -548,7 +548,7 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
     </main>
 
     <footer>
-        <p>&copy; 2027 <span>Pirata Cup Interescolar</span>. Todos os direitos reservados. Idealizado por <span>Roni</span> & Gerenciado com excelência.</p>
+        <p>&copy; 2027 <span>Pirata Cup Interescolar</span>. Todos os direitos reservados. Idealizado por <span>Roni</span> & gerenciado por <span>RH</span>.</p>
     </footer>
 </body>
 </html>`;
@@ -574,8 +574,8 @@ app.post('/login', (req, res) => {
                 <h2>🔐 Acesso Administrativo</h2>
                 <div class="alert alert-error">Credenciais inválidas!</div>
                 <form method="POST" action="/login">
-                    <div class="form-group"><label>Usuário:</label><input type="text" name="username" class="form-control" required></div>
-                    <div class="form-group"><label>Senha:</label><input type="password" name="password" class="form-control" required></div>
+                    <div class="form-group" style="text-align: center;"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
+                    <div class="form-group" style="text-align: center;"><label>Senha</label><input type="password" name="password" class="form-control" style="text-align: center;" required></div>
                     <button type="submit" class="btn-gold" style="width: 100%; margin-top: 10px;">Entrar no Navio</button>
                 </form>
             </div>`;
@@ -789,8 +789,8 @@ app.get('/', (req, res) => {
             body = `<div class="login-box">
                 <h2>🔐 Acesso Administrativo</h2>
                 <form method="POST" action="/login">
-                    <div class="form-group" style="text-align: center;><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
-                    <div class="form-group" style="text-align: center;><label>Senha</label><input type="password" name="password" class="form-control" style="text-align: center;" required></div>
+                    <div class="form-group" style="text-align: center;"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
+                    <div class="form-group" style="text-align: center;"><label>Senha</label><input type="password" name="password" class="form-control" style="text-align: center;" required></div>
                     <button type="submit" class="btn-gold" style="width: 100%; margin-top: 10px;">Entrar no Navio</button>
                 </form>
             </div>`;
