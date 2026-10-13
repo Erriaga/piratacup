@@ -571,7 +571,7 @@ app.post('/login', (req, res) => {
     } else {
         db.all("SELECT * FROM teams", (err, teams) => {
             const body = `<div class="login-box">
-                <h2>🔐 Acesso Administrativo</h2><br>
+                <h2 style="color: #d4af37; text-align: center;">ACESSO ADMINISTRATIVO</h2><br>
                 <div class="alert alert-error">Credenciais inválidas!</div>
                 <form method="POST" action="/login">
                     <div class="form-group" style="text-align: center;"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
@@ -788,7 +788,7 @@ app.get('/', (req, res) => {
 
         } else if (activeTab === 'login') {
             body = `<div class="login-box">
-                <h2>🔐 Acesso Administrativo</h2><br>
+                <h2 style="color: #d4af37; text-align: center;">ACESSO ADMINISTRATIVO</h2><br>
                 <form method="POST" action="/login">
                     <div class="form-group" style="text-align: center;"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
                     <div class="form-group" style="text-align: center;"><label>Senha</label><input type="password" name="password" class="form-control" style="text-align: center;" required></div>
