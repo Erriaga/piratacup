@@ -6,6 +6,10 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// LOGS GLOBAIS: em vez de derrubar o processo (causa dos 502), registra o erro no log do Render
+process.on('uncaughtException', (err) => console.error('UNCAUGHT EXCEPTION:', err));
+process.on('unhandledRejection', (err) => console.error('UNHANDLED REJECTION:', err));
+
 // Necessário atrás do proxy do Render (HTTPS)
 app.set('trust proxy', 1);
 
@@ -13,35 +17,29 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
 // Sessão em cookie assinado: sobrevive a restarts/spin-down do Render
-// (o MemoryStore do express-session perdia a sessão a cada reinício -> 401)
 app.use(cookieSession({
     name: 'piratacup.sess',
     keys: ['pirata-cup-secret-2027', 'pirata-cup-fallback-key'],
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 dias
+    maxAge: 30 * 24 * 60 * 60 * 1000,
     httpOnly: true,
     sameSite: 'lax'
 }));
 
-const dbFile = path.join(__dirname, 'piratacup.db');
+// Disco persistente: defina DATA_DIR=/opt/data no Environment do Render (com Disk montado)
+const dataDir = process.env.DATA_DIR || __dirname;
+const dbFile = path.join(dataDir, 'piratacup.db');
+
 const db = new sqlite3.Database(dbFile, (err) => {
-    if (err) {
-        console.error('Erro ao abrir o banco de dados', err.message);
-    } else {
-        console.log('Conectado ao banco SQLite.');
-        initDb();
-    }
+    if (err) console.error('Erro ao abrir o banco de dados:', err.message);
+    else { console.log('Conectado ao banco SQLite em', dbFile); initDb(); }
 });
 
 function initDb() {
     db.run(`CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        acronym TEXT NOT NULL,
-        image TEXT NOT NULL,
-        champion INTEGER DEFAULT 0,
-        runner_up INTEGER DEFAULT 0,
-        third_place INTEGER DEFAULT 0,
-        semifinalist INTEGER DEFAULT 0
+        name TEXT NOT NULL, acronym TEXT NOT NULL, image TEXT NOT NULL,
+        champion INTEGER DEFAULT 0, runner_up INTEGER DEFAULT 0,
+        third_place INTEGER DEFAULT 0, semifinalist INTEGER DEFAULT 0
     )`, () => {
         db.get("SELECT COUNT(*) as count FROM teams", (err, row) => {
             if (row && row.count === 0) {
@@ -64,14 +62,10 @@ function initDb() {
     });
     db.run(`CREATE TABLE IF NOT EXISTS matches (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        phase TEXT NOT NULL,
-        match_index INTEGER NOT NULL,
-        team1_id INTEGER,
-        team2_id INTEGER,
-        team1_score INTEGER DEFAULT 0,
-        team2_score INTEGER DEFAULT 0,
-        team1_pen INTEGER DEFAULT NULL,
-        team2_pen INTEGER DEFAULT NULL,
+        phase TEXT NOT NULL, match_index INTEGER NOT NULL,
+        team1_id INTEGER, team2_id INTEGER,
+        team1_score INTEGER DEFAULT 0, team2_score INTEGER DEFAULT 0,
+        team1_pen INTEGER DEFAULT NULL, team2_pen INTEGER DEFAULT NULL,
         UNIQUE(phase, match_index)
     )`, () => {
         db.get("SELECT COUNT(*) as count FROM matches", (err, row) => {
@@ -81,10 +75,8 @@ function initDb() {
                     ['swiss_r2', 0], ['swiss_r2', 1], ['swiss_r2', 2], ['swiss_r2', 3],
                     ['swiss_r3', 0], ['swiss_r3', 1],
                     ['playoffs_semi', 0], ['playoffs_semi', 1],
-                    ['playoffs_third', 0],
-                    ['playoffs_final', 0]
+                    ['playoffs_third', 0], ['playoffs_final', 0]
                 ];
-                // INSERT OR IGNORE: nunca duplica nem falha se a linha já existir
                 const stmt = db.prepare("INSERT OR IGNORE INTO matches (phase, match_index) VALUES (?, ?)");
                 initialMatches.forEach(m => stmt.run(m));
                 stmt.finalize();
@@ -93,7 +85,7 @@ function initDb() {
     });
 }
 
-function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
+function renderLayout(activeTab, content, loginError = '') {
     return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -104,514 +96,86 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Arimo:wght@400;700&family=Raleway:wght@400;600;700;800;900&display=swap" rel="stylesheet">
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            border-radius: 0 !important;
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; border-radius: 0 !important; }
         :root {
-            --bg-color: #080808;
-            --card-bg: #141414;
-            --card-border: #262626;
-            --gold-primary: #d4af37;
-            --gold-secondary: #c5a059;
-            --gold-light: #f4e8c1;
-            --gold-dark: #8c7323;
-            --text-main: #f0f0f0;
-            --text-muted: #a0a0a0;
-            --accent-red: #c0392b;
-            --accent-green: #27ae60;
+            --bg-color: #080808; --card-bg: #141414; --card-border: #262626;
+            --gold-primary: #d4af37; --gold-secondary: #c5a059; --gold-light: #f4e8c1; --gold-dark: #8c7323;
+            --text-main: #f0f0f0; --text-muted: #a0a0a0;
+            --accent-red: #c0392b; --accent-green: #27ae60;
         }
-        body {
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            font-family: 'Arimo', sans-serif;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            overflow-x: hidden;
-        }
-        h1, h2, h3, h4, h5, h6, .brand-font {
-            font-family: 'Raleway', sans-serif;
-            letter-spacing: 1px;
-        }
-        header {
-            background: linear-gradient(180deg, #111 0%, #080808 100%);
-            border-bottom: 2px solid var(--gold-dark);
-            padding: 15px 0;
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-        }
-        .header-container {
-            max-width: 1200px;
-            margin: 0 auto;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0 15px;
-        }
-        .logo-area {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            text-decoration: none;
-        }
-        .logo-title h1 {
-            font-size: 1.5rem;
-            font-weight: 900;
-            color: var(--gold-primary);
-            text-transform: uppercase;
-        }
-        .logo-title span {
-            font-size: 0.75rem;
-            color: var(--gold-light);
-            letter-spacing: 3px;
-            display: block;
-            text-transform: uppercase;
-        }
-        nav ul {
-            display: flex;
-            list-style: none;
-            gap: 8px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-        nav a {
-            color: var(--text-muted);
-            text-decoration: none;
-            font-family: 'Raleway', sans-serif;
-            font-weight: 700;
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            padding: 6px 12px;
-            transition: all 0.3s ease;
-            border: 1px solid transparent;
-        }
-        nav a:hover, nav a.active {
-            color: var(--gold-light);
-            background: rgba(212, 175, 55, 0.1);
-            border-color: var(--gold-secondary);
-        }
-        main {
-            flex: 1;
-            max-width: 1200px;
-            width: 100%;
-            margin: 20px auto;
-            padding: 0 15px;
-        }
-        .hero-banner {
-            background: linear-gradient(135deg, #181611 0%, #0d0c09 100%);
-            border: 2px solid var(--gold-secondary);
-            padding: 30px 20px;
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        .hero-banner h2 {
-            font-size: 2rem;
-            color: var(--gold-primary);
-            margin-bottom: 12px;
-            font-weight: 800;
-            text-transform: uppercase;
-            word-break: break-word;
-        }
-        .hero-banner p {
-            color: var(--gold-light);
-            font-size: 1rem;
-            max-width: 800px;
-            margin: 0 auto 20px auto;
-            line-height: 1.5;
-        }
-        .btn-gold {
-            background: linear-gradient(135deg, var(--gold-primary), var(--gold-secondary));
-            color: #080808;
-            border: none;
-            padding: 10px 22px;
-            font-family: 'Raleway', sans-serif;
-            font-weight: 800;
-            text-transform: uppercase;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-            font-size: 0.9rem;
-        }
-        .btn-gold:hover {
-            background: linear-gradient(135deg, var(--gold-light), var(--gold-primary));
-        }
-        .section-title {
-            font-size: 1.5rem;
-            color: var(--gold-primary);
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            border-bottom: 1px solid var(--card-border);
-            padding-bottom: 8px;
-            flex-wrap: wrap;
-        }
-        .grid-teams {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .team-card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--card-border);
-            display: flex;
-            flex-direction: column;
-        }
-        .team-img-container {
-            height: 160px;
-            width: 100%;
-            overflow: hidden;
-            background: #111;
-            position: relative;
-        }
-        .team-img-container img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .team-acronym {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            background: rgba(0,0,0,0.8);
-            border: 1px solid var(--gold-secondary);
-            color: var(--gold-primary);
-            padding: 3px 6px;
-            font-size: 0.75rem;
-            font-weight: 800;
-            letter-spacing: 1px;
-        }
-        .team-info {
-            padding: 15px;
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            text-align: center;
-        }
-        .team-stars {
-            font-size: 1rem;
-            margin-bottom: 4px;
-            min-height: 20px;
-        }
-        .team-name {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--text-main);
-            margin-bottom: 12px;
-            min-height: 2.2rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .trophies-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 6px;
-            background: rgba(0,0,0,0.4);
-            padding: 8px;
-            border: 1px solid rgba(255,255,255,0.05);
-            text-align: center;
-        }
-        .trophies-grid-3 {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 6px;
-            background: rgba(0,0,0,0.4);
-            padding: 8px;
-            border: 1px solid rgba(255,255,255,0.05);
-            text-align: center;
-        }
-        .trophy-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            justify-content: center;
-        }
-        .trophy-item span.count {
-            font-size: 0.95rem;
-            font-weight: 800;
-            color: var(--gold-light);
-            margin-top: 2px;
-        }
-        .swiss-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 15px;
-            margin-bottom: 30px;
-        }
-        @media(max-width: 900px) {
-            .swiss-container {
-                grid-template-columns: 1fr;
-            }
-        }
-        .swiss-card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--card-border);
-            padding: 15px;
-        }
-        .swiss-card h3 {
-            color: var(--gold-primary);
-            margin-bottom: 12px;
-            font-size: 1rem;
-            text-align: center;
-            text-transform: uppercase;
-        }
-        .match-box {
-            background: rgba(255,255,255,0.02);
-            border: 1px solid rgba(255,255,255,0.08);
-            margin-bottom: 10px;
-            padding: 8px;
-        }
-        .match-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 6px 8px;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-            gap: 6px;
-            flex-wrap: wrap;
-        }
-        .match-row:last-child {
-            border-bottom: none;
-        }
-        .match-teams {
-            font-weight: 700;
-            font-size: 0.85rem;
-            color: var(--text-main);
-        }
-        .match-score {
-            font-weight: 800;
-            color: var(--gold-light);
-            font-size: 0.85rem;
-        }
-        .sub-phase-title {
-            font-style: italic;
-            color: var(--gold-light);
-            font-size: 1.2rem;
-            margin: 25px 0 12px 0;
-            font-family: 'Raleway', sans-serif;
-            font-weight: 700;
-            text-align: center;
-        }
-        .teams-palette {
-            background: #111;
-            border: 1px solid var(--gold-secondary);
-            padding: 12px;
-            margin-bottom: 20px;
-        }
-        .teams-palette h4 {
-            color: var(--gold-primary);
-            font-size: 0.9rem;
-            margin-bottom: 8px;
-            text-transform: uppercase;
-        }
-        .palette-chips {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-        .team-chip {
-            background: rgba(212, 175, 55, 0.15);
-            border: 1px solid var(--gold-secondary);
-            color: var(--gold-light);
-            padding: 6px 10px;
-            font-weight: 700;
-            font-size: 0.8rem;
-            cursor: grab;
-            user-select: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .team-chip:active {
-            cursor: grabbing;
-        }
-        .team-chip.selected {
-            background: var(--gold-primary);
-            color: #000;
-        }
-        .match-slot {
-            min-height: 36px;
-            background: rgba(0,0,0,0.6);
-            border: 1px dashed var(--gold-dark);
-            padding: 4px 8px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            font-size: 0.85rem;
-            font-weight: 700;
-            color: var(--text-main);
-            flex: 1;
-            min-width: 90px;
-            cursor: pointer;
-        }
-        .match-slot.drag-over {
-            background: rgba(212, 175, 55, 0.2);
-            border-color: var(--gold-primary);
-        }
-        .score-input {
-            width: 38px;
-            background: #0d0d0d;
-            border: 1px solid var(--card-border);
-            color: var(--gold-light);
-            text-align: center;
-            font-weight: 800;
-            font-size: 0.85rem;
-            padding: 4px;
-        }
-        .pen-inputs {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            font-size: 0.75rem;
-            color: var(--gold-light);
-            margin-top: 4px;
-            justify-content: center;
-            background: rgba(212,175,55,0.05);
-            padding: 4px;
-        }
-        .admin-table-container {
-            width: 100%;
-            overflow-x: auto;
-            margin-bottom: 30px;
-        }
-        .admin-table {
-            width: 100%;
-            min-width: 650px;
-            border-collapse: collapse;
-            background-color: var(--card-bg);
-            border: 1px solid var(--card-border);
-        }
-        .admin-table th, .admin-table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid var(--card-border);
-            font-size: 0.9rem;
-        }
-        .admin-table th {
-            background-color: #1c1c1c;
-            color: var(--gold-primary);
-            font-family: 'Raleway', sans-serif;
-            text-transform: uppercase;
-            font-size: 0.8rem;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 6px;
-            font-family: 'Raleway', sans-serif;
-            font-weight: 700;
-            color: var(--gold-light);
-            font-size: 0.85rem;
-            text-transform: uppercase;
-        }
-        .form-control {
-            width: 100%;
-            padding: 10px 12px;
-            background-color: #0d0d0d;
-            border: 1px solid var(--card-border);
-            color: var(--text-main);
-            font-family: 'Arimo', sans-serif;
-            font-size: 0.95rem;
-        }
-        .form-row {
-            display: grid;
-            grid-template-columns: 2fr 1fr 1fr;
-            gap: 12px;
-        }
+        body { background-color: var(--bg-color); color: var(--text-main); font-family: 'Arimo', sans-serif; min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
+        h1, h2, h3, h4, h5, h6, .brand-font { font-family: 'Raleway', sans-serif; letter-spacing: 1px; }
+        header { background: linear-gradient(180deg, #111 0%, #080808 100%); border-bottom: 2px solid var(--gold-dark); padding: 15px 0; position: sticky; top: 0; z-index: 1000; }
+        .header-container { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; padding: 0 15px; }
+        .logo-area { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+        .logo-title h1 { font-size: 1.5rem; font-weight: 900; color: var(--gold-primary); text-transform: uppercase; }
+        .logo-title span { font-size: 0.75rem; color: var(--gold-light); letter-spacing: 3px; display: block; text-transform: uppercase; }
+        nav ul { display: flex; list-style: none; gap: 8px; align-items: center; flex-wrap: wrap; }
+        nav a { color: var(--text-muted); text-decoration: none; font-family: 'Raleway', sans-serif; font-weight: 700; font-size: 0.85rem; text-transform: uppercase; padding: 6px 12px; transition: all 0.3s ease; border: 1px solid transparent; }
+        nav a:hover, nav a.active { color: var(--gold-light); background: rgba(212, 175, 55, 0.1); border-color: var(--gold-secondary); }
+        main { flex: 1; max-width: 1200px; width: 100%; margin: 20px auto; padding: 0 15px; }
+        .hero-banner { background: linear-gradient(135deg, #181611 0%, #0d0c09 100%); border: 2px solid var(--gold-secondary); padding: 30px 20px; text-align: center; margin-bottom: 30px; }
+        .hero-banner h2 { font-size: 2rem; color: var(--gold-primary); margin-bottom: 12px; font-weight: 800; text-transform: uppercase; word-break: break-word; }
+        .hero-banner p { color: var(--gold-light); font-size: 1rem; max-width: 800px; margin: 0 auto 20px auto; line-height: 1.5; }
+        .btn-gold { background: linear-gradient(135deg, var(--gold-primary), var(--gold-secondary)); color: #080808; border: none; padding: 10px 22px; font-family: 'Raleway', sans-serif; font-weight: 800; text-transform: uppercase; cursor: pointer; text-decoration: none; display: inline-block; font-size: 0.9rem; }
+        .btn-gold:hover { background: linear-gradient(135deg, var(--gold-light), var(--gold-primary)); }
+        .section-title { font-size: 1.5rem; color: var(--gold-primary); margin-bottom: 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--card-border); padding-bottom: 8px; flex-wrap: wrap; }
+        .grid-teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .team-card { background-color: var(--card-bg); border: 1px solid var(--card-border); display: flex; flex-direction: column; }
+        .team-img-container { height: 160px; width: 100%; overflow: hidden; background: #111; position: relative; }
+        .team-img-container img { width: 100%; height: 100%; object-fit: cover; }
+        .team-acronym { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.8); border: 1px solid var(--gold-secondary); color: var(--gold-primary); padding: 3px 6px; font-size: 0.75rem; font-weight: 800; letter-spacing: 1px; }
+        .team-info { padding: 15px; flex: 1; display: flex; flex-direction: column; justify-content: space-between; text-align: center; }
+        .team-stars { font-size: 1rem; margin-bottom: 4px; min-height: 20px; }
+        .team-name { font-size: 1.1rem; font-weight: 700; color: var(--text-main); margin-bottom: 12px; min-height: 2.2rem; display: flex; align-items: center; justify-content: center; }
+        .trophies-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; background: rgba(0,0,0,0.4); padding: 8px; border: 1px solid rgba(255,255,255,0.05); text-align: center; }
+        .trophies-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; background: rgba(0,0,0,0.4); padding: 8px; border: 1px solid rgba(255,255,255,0.05); text-align: center; }
+        .trophy-item { display: flex; flex-direction: column; align-items: center; font-size: 0.7rem; color: var(--text-muted); justify-content: center; }
+        .trophy-item span.count { font-size: 0.95rem; font-weight: 800; color: var(--gold-light); margin-top: 2px; }
+        .swiss-container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 30px; }
+        @media(max-width: 900px) { .swiss-container { grid-template-columns: 1fr; } }
+        .swiss-card { background-color: var(--card-bg); border: 1px solid var(--card-border); padding: 15px; }
+        .swiss-card h3 { color: var(--gold-primary); margin-bottom: 12px; font-size: 1rem; text-align: center; text-transform: uppercase; }
+        .match-box { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08); margin-bottom: 10px; padding: 8px; }
+        .match-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); gap: 6px; flex-wrap: wrap; }
+        .match-row:last-child { border-bottom: none; }
+        .match-teams { font-weight: 700; font-size: 0.85rem; color: var(--text-main); }
+        .match-score { font-weight: 800; color: var(--gold-light); font-size: 0.85rem; }
+        .sub-phase-title { font-style: italic; color: var(--gold-light); font-size: 1.2rem; margin: 25px 0 12px 0; font-family: 'Raleway', sans-serif; font-weight: 700; text-align: center; }
+        .teams-palette { background: #111; border: 1px solid var(--gold-secondary); padding: 12px; margin-bottom: 20px; }
+        .teams-palette h4 { color: var(--gold-primary); font-size: 0.9rem; margin-bottom: 8px; text-transform: uppercase; }
+        .palette-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+        .team-chip { background: rgba(212, 175, 55, 0.15); border: 1px solid var(--gold-secondary); color: var(--gold-light); padding: 6px 10px; font-weight: 700; font-size: 0.8rem; cursor: grab; user-select: none; display: inline-flex; align-items: center; gap: 6px; }
+        .team-chip:active { cursor: grabbing; }
+        .team-chip.selected { background: var(--gold-primary); color: #000; }
+        .match-slot { min-height: 36px; background: rgba(0,0,0,0.6); border: 1px dashed var(--gold-dark); padding: 4px 8px; display: flex; align-items: center; justify-content: space-between; font-size: 0.85rem; font-weight: 700; color: var(--text-main); flex: 1; min-width: 90px; cursor: pointer; }
+        .match-slot.drag-over { background: rgba(212, 175, 55, 0.2); border-color: var(--gold-primary); }
+        .score-input { width: 38px; background: #0d0d0d; border: 1px solid var(--card-border); color: var(--gold-light); text-align: center; font-weight: 800; font-size: 0.85rem; padding: 4px; }
+        .pen-inputs { display: flex; align-items: center; gap: 4px; font-size: 0.75rem; color: var(--gold-light); margin-top: 4px; justify-content: center; background: rgba(212,175,55,0.05); padding: 4px; }
+        .admin-table-container { width: 100%; overflow-x: auto; margin-bottom: 30px; }
+        .admin-table { width: 100%; min-width: 650px; border-collapse: collapse; background-color: var(--card-bg); border: 1px solid var(--card-border); }
+        .admin-table th, .admin-table td { padding: 12px; text-align: left; border-bottom: 1px solid var(--card-border); font-size: 0.9rem; }
+        .admin-table th { background-color: #1c1c1c; color: var(--gold-primary); font-family: 'Raleway', sans-serif; text-transform: uppercase; font-size: 0.8rem; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 6px; font-family: 'Raleway', sans-serif; font-weight: 700; color: var(--gold-light); font-size: 0.85rem; text-transform: uppercase; }
+        .form-control { width: 100%; padding: 10px 12px; background-color: #0d0d0d; border: 1px solid var(--card-border); color: var(--text-main); font-family: 'Arimo', sans-serif; font-size: 0.95rem; }
+        .form-row { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
         @media(max-width: 768px) {
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-            .header-container {
-                flex-direction: column;
-                gap: 10px;
-                text-align: center;
-            }
-            nav ul {
-                justify-content: center;
-            }
-            .hero-banner h2 {
-                font-size: 1.6rem;
-            }
+            .form-row { grid-template-columns: 1fr; }
+            .header-container { flex-direction: column; gap: 10px; text-align: center; }
+            nav ul { justify-content: center; }
+            .hero-banner h2 { font-size: 1.6rem; }
         }
-        .trophies-input-row {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
-        }
-        @media(max-width: 500px) {
-            .trophies-input-row {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-        .alert {
-            padding: 12px;
-            margin-bottom: 20px;
-            font-weight: 600;
-            font-size: 0.9rem;
-        }
-        .alert-success {
-            background-color: rgba(39, 174, 96, 0.15);
-            border: 1px solid var(--accent-green);
-            color: #2ecc71;
-        }
-        .alert-error {
-            background-color: rgba(192, 57, 43, 0.15);
-            border: 1px solid var(--accent-red);
-            color: #e74c3c;
-        }
-        .login-box {
-            max-width: 420px;
-            margin: 30px auto;
-            background-color: var(--card-bg);
-            border: 1px solid var(--gold-secondary);
-            padding: 30px 20px;
-        }
-        .btn-danger {
-            background: var(--accent-red);
-            color: white;
-            border: none;
-            padding: 6px 12px;
-            cursor: pointer;
-            font-weight: 700;
-            font-size: 0.8rem;
-        }
-        .btn-edit {
-            background: #2980b9;
-            color: white;
-            border: none;
-            padding: 6px 12px;
-            cursor: pointer;
-            font-weight: 700;
-            font-size: 0.8rem;
-            text-decoration: none;
-            display: inline-block;
-            margin-right: 4px;
-        }
-        footer {
-            background-color: #050505;
-            border-top: 1px solid var(--card-border);
-            text-align: center;
-            padding: 20px 15px;
-            color: var(--text-muted);
-            font-size: 0.85rem;
-            margin-top: auto;
-        }
-        footer span {
-            color: var(--gold-primary);
-            font-weight: 700;
-        }
+        .trophies-input-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        @media(max-width: 500px) { .trophies-input-row { grid-template-columns: repeat(2, 1fr); } }
+        .alert { padding: 12px; margin-bottom: 20px; font-weight: 600; font-size: 0.9rem; }
+        .alert-success { background-color: rgba(39, 174, 96, 0.15); border: 1px solid var(--accent-green); color: #2ecc71; }
+        .alert-error { background-color: rgba(192, 57, 43, 0.15); border: 1px solid var(--accent-red); color: #e74c3c; }
+        .login-box { max-width: 420px; margin: 30px auto; background-color: var(--card-bg); border: 1px solid var(--gold-secondary); padding: 30px 20px; }
+        .btn-danger { background: var(--accent-red); color: white; border: none; padding: 6px 12px; cursor: pointer; font-weight: 700; font-size: 0.8rem; }
+        .btn-edit { background: #2980b9; color: white; border: none; padding: 6px 12px; cursor: pointer; font-weight: 700; font-size: 0.8rem; text-decoration: none; display: inline-block; margin-right: 4px; }
+        footer { background-color: #050505; border-top: 1px solid var(--card-border); text-align: center; padding: 20px 15px; color: var(--text-muted); font-size: 0.85rem; margin-top: auto; }
+        footer span { color: var(--gold-primary); font-weight: 700; }
     </style>
 </head>
 <body>
@@ -634,7 +198,6 @@ function renderLayout(activeTab, content, loginError = '', crudMsg = '') {
         </div>
     </header>
     <main>
-        ${crudMsg ? `<div class="alert alert-success">${crudMsg}</div>` : ''}
         ${loginError ? `<div class="alert alert-error">${loginError}</div>` : ''}
         ${content.body}
     </main>
@@ -658,18 +221,16 @@ app.post('/login', (req, res) => {
         req.session.adminUser = username === 'roni' ? 'Roni (Idealizador)' : 'RH';
         res.redirect('/?tab=admin');
     } else {
-        db.all("SELECT * FROM teams", (err, teams) => {
-            const body = `<div class="login-box">
-                <h2 style="color: #d4af37; text-align: center; font-size: 1.3rem;">ACESSO ADMINISTRATIVO</h2><br>
-                <div class="alert alert-error">Credenciais inválidas!</div>
-                <form method="POST" action="/login">
-                    <div class="form-group" style="text-align: center;"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
-                    <div class="form-group" style="text-align: center;"><label>Senha</label><input type="password" name="password" class="form-control" style="text-align: center;" required></div>
-                    <button type="submit" class="btn-gold" style="width: 100%; margin-top: 10px;">Entrar no Navio</button>
-                </form>
-            </div>`;
-            res.send(renderLayout('login', { body, isAdmin: false }));
-        });
+        const body = `<div class="login-box">
+            <h2 style="color: #d4af37; text-align: center; font-size: 1.3rem;">ACESSO ADMINISTRATIVO</h2><br>
+            <div class="alert alert-error">Credenciais inválidas!</div>
+            <form method="POST" action="/login">
+                <div class="form-group" style="text-align: center;"><label>Usuário</label><input type="text" name="username" class="form-control" style="text-align: center;" required></div>
+                <div class="form-group" style="text-align: center;"><label>Senha</label><input type="password" name="password" class="form-control" style="text-align: center;" required></div>
+                <button type="submit" class="btn-gold" style="width: 100%; margin-top: 10px;">Entrar no Navio</button>
+            </form>
+        </div>`;
+        res.send(renderLayout('login', { body, isAdmin: false }));
     }
 });
 
@@ -685,18 +246,14 @@ app.post('/save-matches', (req, res) => {
         return res.status(400).json({ success: false, error: 'Dados inválidos ou vazios.' });
     }
 
-    // UPSERT: atualiza se a partida existir, cria se não existir.
-    // Elimina o problema de UPDATE afetar 0 linhas e ainda responder "sucesso".
+    // UPSERT: atualiza se a partida existir, cria se não existir
     const upsertSql = `INSERT INTO matches
         (phase, match_index, team1_id, team2_id, team1_score, team2_score, team1_pen, team2_pen)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(phase, match_index) DO UPDATE SET
-            team1_id    = excluded.team1_id,
-            team2_id    = excluded.team2_id,
-            team1_score = excluded.team1_score,
-            team2_score = excluded.team2_score,
-            team1_pen   = excluded.team1_pen,
-            team2_pen   = excluded.team2_pen`;
+            team1_id = excluded.team1_id, team2_id = excluded.team2_id,
+            team1_score = excluded.team1_score, team2_score = excluded.team2_score,
+            team1_pen = excluded.team1_pen, team2_pen = excluded.team2_pen`;
 
     db.serialize(() => {
         db.run("BEGIN TRANSACTION", (errBegin) => {
@@ -705,9 +262,7 @@ app.post('/save-matches', (req, res) => {
                 return res.json({ success: false, error: errBegin.message });
             }
             const stmt = db.prepare(upsertSql);
-            let completed = 0;
-            let hasError = false;
-            let lastError = '';
+            let completed = 0, hasError = false, lastError = '';
 
             matchesData.forEach(m => {
                 const t1 = (m.team1_id !== null && m.team1_id !== undefined && m.team1_id !== '') ? parseInt(m.team1_id) : null;
@@ -727,9 +282,7 @@ app.post('/save-matches', (req, res) => {
                     if (completed === matchesData.length) {
                         stmt.finalize(() => {
                             if (hasError) {
-                                db.run("ROLLBACK", () => {
-                                    res.json({ success: false, error: 'Erro no banco: ' + lastError });
-                                });
+                                db.run("ROLLBACK", () => res.json({ success: false, error: 'Erro no banco: ' + lastError }));
                             } else {
                                 db.run("COMMIT", (errCommit) => {
                                     if (errCommit) {
@@ -753,10 +306,8 @@ app.post('/crud', (req, res) => {
     if (!req.session.adminLogged) return res.redirect('/?tab=login');
     const { crud_action, id, name, acronym, image, champion, runner_up, third_place, semifinalist } = req.body;
     if (crud_action === 'create' || crud_action === 'update') {
-        const c = parseInt(champion) || 0;
-        const r = parseInt(runner_up) || 0;
-        const tp = parseInt(third_place) || 0;
-        const s = parseInt(semifinalist) || 0;
+        const c = parseInt(champion) || 0, r = parseInt(runner_up) || 0;
+        const tp = parseInt(third_place) || 0, s = parseInt(semifinalist) || 0;
         const acr = (acronym || '').toUpperCase().substring(0, 4);
         if (crud_action === 'create') {
             db.run("INSERT INTO teams (name, acronym, image, champion, runner_up, third_place, semifinalist) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -783,7 +334,15 @@ app.get('/', (req, res) => {
     const activeTab = req.query.tab || 'home';
     const isAdmin = !!req.session.adminLogged;
     db.all("SELECT * FROM teams ORDER BY champion DESC, runner_up DESC, third_place DESC, semifinalist DESC, id ASC", (err, teams) => {
-        db.all("SELECT * FROM matches", (err, matches) => {
+        if (err || !Array.isArray(teams)) {
+            console.error('Erro ao consultar teams:', err && err.message);
+            teams = [];
+        }
+        db.all("SELECT * FROM matches", (errM, matches) => {
+            if (errM || !Array.isArray(matches)) {
+                console.error('Erro ao consultar matches:', errM && errM.message);
+                matches = [];
+            }
             let body = '';
             const getMatch = (phase, idx) => {
                 return matches.find(m => m.phase === phase && m.match_index === idx) || { team1_id: null, team2_id: null, team1_score: 0, team2_score: 0, team1_pen: null, team2_pen: null };
@@ -799,7 +358,7 @@ app.get('/', (req, res) => {
             if (activeTab === 'home') {
                 let highlights = teams.slice(0, 4).map(team => {
                     const stars = team.champion > 0 ? '⭐'.repeat(team.champion) : '<span style="opacity:0">⭐</span>';
-                    const gridHtml = team.champion > 0 
+                    const gridHtml = team.champion > 0
                         ? `<div class="trophies-grid">
                             <div class="trophy-item">🏆 <span class="count">${team.champion}</span></div>
                             <div class="trophy-item">🥈 <span class="count">${team.runner_up}</span></div>
@@ -835,7 +394,7 @@ app.get('/', (req, res) => {
             } else if (activeTab === 'teams') {
                 let allTeams = teams.map(team => {
                     const stars = team.champion > 0 ? '⭐'.repeat(team.champion) : '<span style="opacity:0">⭐</span>';
-                    const gridHtml = team.champion > 0 
+                    const gridHtml = team.champion > 0
                         ? `<div class="trophies-grid">
                             <div class="trophy-item">🏆 <span class="count">${team.champion}</span></div>
                             <div class="trophy-item">🥈 <span class="count">${team.runner_up}</span></div>
@@ -911,7 +470,7 @@ app.get('/', (req, res) => {
                 };
                 let adminControlsHtml = '';
                 if (isAdmin) {
-                    let paletteChips = teams.map(t => 
+                    let paletteChips = teams.map(t =>
                         `<div class="team-chip" draggable="true" ondragstart="dragTeam(event, ${t.id})" onclick="clickTeamPalette(event, ${t.id}, '${t.acronym}')">
                             ${t.acronym} - ${t.name}
                         </div>`
@@ -1016,15 +575,13 @@ app.get('/', (req, res) => {
                     function assignTeam(phase, matchIndex, slotNum, teamId) {
                         const matchBox = document.querySelector(\`.match-box[data-phase="\${phase}"][data-match-index="\${matchIndex}"]\`);
                         if (!matchBox) return;
-                        const slot1 = matchBox.querySelector('.match-slot[data-slot="1"]');
-                        const slot2 = matchBox.querySelector('.match-slot[data-slot="2"]');
                         const otherSlotNum = slotNum === 1 ? 2 : 1;
                         const otherSlot = matchBox.querySelector(\`.match-slot[data-slot="\${otherSlotNum}"]\`);
                         if (otherSlot && String(otherSlot.getAttribute('data-team-id')) === String(teamId)) {
                             showStatus('Uma equipe não pode jogar contra si mesma na mesma partida!', true);
                             return;
                         }
-                        const targetSlot = slotNum === 1 ? slot1 : slot2;
+                        const targetSlot = matchBox.querySelector(\`.match-slot[data-slot="\${slotNum}"]\`);
                         const teamObj = allTeamsData.find(t => String(t.id) === String(teamId));
                         if (!teamObj) return;
                         targetSlot.setAttribute('data-team-id', teamObj.id);
@@ -1089,6 +646,8 @@ app.get('/', (req, res) => {
                                 setTimeout(() => location.reload(), 1000);
                             } else if (res.status === 401) {
                                 showStatus('❌ Sua sessão expirou. Recarregue a página (F5) e faça login novamente.', true);
+                            } else if (res.status === 502) {
+                                showStatus('❌ O servidor está reiniciando. Aguarde ~1 minuto e tente salvar de novo.', true);
                             } else {
                                 showStatus('❌ Erro ao salvar (HTTP ' + res.status + '): ' + (data.error || 'resposta inválida do servidor'), true);
                                 console.error('Resposta do servidor:', res.status, data);
