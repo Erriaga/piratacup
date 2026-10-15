@@ -1,2 +1,25 @@
-node_modules
-   *.db
+# Dependências
+node_modules/
+
+# Banco de dados SQLite (não deve ir para o repositório)
+piratacup.db
+piratacup.db-journal
+piratacup.db-wal
+piratacup.db-shm
+
+# Variáveis de ambiente
+.env
+.env.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Editores
+.vscode/
+.idea/
