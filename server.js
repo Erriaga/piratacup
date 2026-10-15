@@ -34,32 +34,64 @@ const db = new sqlite3.Database(dbFile, (err) => {
     else { console.log('Conectado ao banco SQLite em', dbFile); initDb(); }
 });
 
+// ============================================================
+// BANCO COM AUTO-REPARO: verifica as colunas reais e recria
+// a tabela se a estrutura antiga for incompatível
+// ============================================================
 function initDb() {
+    ensureTeamsTable();
+    ensureMatchesTable();
+}
+
+function ensureTeamsTable() {
     db.run(`CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL, acronym TEXT NOT NULL, image TEXT NOT NULL,
         champion INTEGER DEFAULT 0, runner_up INTEGER DEFAULT 0,
         third_place INTEGER DEFAULT 0, semifinalist INTEGER DEFAULT 0
     )`, () => {
-        db.get("SELECT COUNT(*) as count FROM teams", (err, row) => {
-            if (row && row.count === 0) {
-                const defaultTeams = [
-                    ['Colégio Canópus', 'CAN', 'https://scontent-gru1-1.xx.fbcdn.net/v/t39.30808-6/300576667_476619551139509_6941224390542513015_n.jpg?stp=dst-jpg_tt6&cstp=mx800x800&ctp=s800x800&_nc_cat=101&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=ae4R3qI_rM4Q7kNvwGnbb6h&_nc_oc=AdrhOzaXAaYH62PM0PhNnZXJrcRth-2ssFCFwamRfOV7Xx82ZG6JVbdm1Yyx4Q-i9gg&_nc_zt=23&_nc_ht=scontent-gru1-1.xx&_nc_gid=CL5gqr8TGtE09gA1fSLZuQ&_nc_ss=7b2a8&oh=00_AQPw90j3GEDTXK3tXvQOtrt0k1SoKM1QIMHria9TZFlWWw&oe=6AD38624', 2, 0, 0, 0],
-                    ['Rede Decisão/Módulo', 'MOD', 'https://ugc.production.linktr.ee/DILxL8jQKSi0otT2Uy4w_5e1dc1e176aabfe8d07377b19887b84c2?io=true&size=avatar-v3_0', 1, 0, 0, 2],
-                    ['Colégio Objetivo', 'OBJ', 'https://scontent-gru2-1.xx.fbcdn.net/v/t39.30808-6/261749881_4887557201309848_2673603789593802657_n.jpg?stp=dst-jpg_tt6&cstp=mx1000x1000&ctp=s1000x1000&_nc_cat=109&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=y0A-EAjmIwMQ7kNvwFu7h2b&_nc_oc=AdpwGFsKD7xHDbycwqLHkOhUuLyOj2LtOBwqfryJkRpZeXYFePdTHcA986A3yJcXSDk&_nc_zt=23&_nc_ht=scontent-gru2-1.xx&_nc_gid=1z2Cga_Aefbb_U-xe1oOcw&_nc_ss=7b2a8&oh=00_AQP_oXLsuB19bKVbV3XwZ0UXOx9H-loE96cScCL7NO5-IA&oe=6AD3854C', 0, 2, 0, 0],
-                    ['Instituto Federal', 'IFSP', 'https://scontent-gru2-2.xx.fbcdn.net/v/t39.30808-6/292419707_428540039285469_3420664120318090063_n.jpg?stp=dst-jpg_tt6&cstp=mx900x1042&ctp=s900x1042&_nc_cat=102&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=MAS2Jv04qD0Q7kNvwGE9FW9&_nc_oc=AdoQfzMYSGRaGzl_1Ym4j5J96u9qTWXSBVthzvsfEo0eN89EGvT1qTfgPEhfylNu2I&_nc_zt=23&_nc_ht=scontent-gru2-2.xx&_nc_gid=eoeQu0uBkhuFiSe9CdYZ5w&_nc_ss=7b2a8&oh=00_AQPMzWVjiHGVL4uKtL8A5cthjQkwOf8r5ZJ1P_A2frpsZwQ&oe=6AD364A8', 0, 1, 1, 0],
-                    ['Colégio Imperatrice', 'IMP', 'https://scontent-gru1-2.xx.fbcdn.net/v/t39.30808-6/533127058_122218958456122240_9154884991764728512_n.jpg?stp=dst-jpg_tt6&cstp=mx1080x1080&ctp=s1080x1080&_nc_cat=100&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=oRmKyOgMrxUQ7kNvwEtVTxp&_nc_oc=AdqIISAb9PZi54md9WVUCIuxHVj9wzwPxsfO6pUfKDnLrLq8eow4nVdhxwi2PR5jGw0&_nc_zt=23&_nc_ht=scontent-gru1-2.xx&_nc_gid=uiBIerTUWsqb_xwJ2G7GrA&_nc_ss=7b2a8&oh=00_AQP3o0PVJ1WzkN52FcWiJmhy-JozBBy3pKz9qg6LzEA&oe=6AD37FED', 0, 0, 2, 0],
-                    ['Colégio Amplia/Caraguatá', 'AMP', 'https://scontent-gru2-2.xx.fbcdn.net/v/t39.30808-6/459556427_122103470552517182_4089939684042885040_n.jpg?stp=dst-jpg_tt6&cstp=mx2000x2000&ctp=s2000x2000&_nc_cat=105&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=Trz0WX9BHEoQ7kNvwHO4hs4&_nc_oc=AdoKP8nKNFp8A-hzY-5SIuVfQlrSQ6IlTHKCHFjVb-FUxRnNg8jTm9xpaxbz8dYiTJE&_nc_zt=23&_nc_ht=scontent-gru2-2.xx&_nc_gid=s8i6wGzUpVy5qLgEStv4kQ&_nc_ss=7b2a8&oh=00_AQNll-LrOwEKJuL5F2U2VfZQY3Z3JkX2W9Hm7C6nQ4pR8sT5uU1vW2xY3zA4bC5dE6fG&oe=6AD3787D', 0, 0, 0, 1],
-                    ['ETEC de Caraguatatuba/CDU', 'ETEC', 'https://scontent-gru1-1.xx.fbcdn.net/v/t39.30808-6/426235193_903602695102152_7572691400377464565_n.jpg?stp=dst-jpg_tt6&cstp=mx1080x1080&ctp=s1080x1080&_nc_cat=104&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=E-FWezEkvYIQ7kNvwG7gB5K&_nc_oc=AdoTUSmU762ZzfWYrVWIKwKlwd0fYsnXpvRaSZDIKoYI6thzvsfEo0eN89EGvT1qTfgPEhfylNu2I&_nc_zt=23&_nc_ht=scontent-gru1-1.xx&_nc_gid=1ghA2BB4fTlWtnY1xeyWcQ&_nc_ss=7b2a8&oh=00_AQM9OIiJ0DYfUzWVHEqcgZaKKraizTAW2vWDfRqUnR4fJQ&oe=6AD362E2', 0, 0, 0, 0],
-                    ['Colégio Tableau', 'TAB', 'https://scontent-gru2-2.xx.fbcdn.net/v/t39.30808-6/352464491_220473307511154_3318921309442921716_n.jpg?stp=dst-jpg_tt6&cstp=mx723x724&ctp=s723x724&_nc_cat=105&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=hp7X1TaetZcQ7kNvwEtd3Cv&_nc_oc=AdrsQFTDFqPCTqiHe9rY4Ez4_bwLdxXbsnzRmZaBBdPOyTuHhecgua6DlRYkGdBHHQw&_nc_zt=23&_nc_ht=scontent-gru2-2.xx&_nc_gid=s5BxW8GCn1uou9Cc004OOw&_nc_ss=7b2a8&oh=00_AQMeMF4bu3m0WVLHm-Prdjmbi99MGsk-mYhFm8Y2ytofkw&oe=6AD380DD', 0, 0, 0, 0],
-                    ['Colégio Nova Geração', 'CNG', 'https://scontent-gru2-1.xx.fbcdn.net/v/t39.30808-6/518326505_1520068049385695_578969158403584619_n.jpg?stp=dst-jpg_tt6&cstp=mx740x740&ctp=s740x740&_nc_cat=107&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=KmH7Zqq0D3gQ7kNvwEZ9bV&_nc_oc=Adrex_UAeFKSM0N_n7MuTrpLGvxn5r8Ja8FddMoHdbJ_9K_s963Pinln4THLaa73SyM&_nc_zt=23&_nc_ht=scontent-gru2-1.xx&_nc_gid=iM2yych6gGXIvAUCeq6MsQ&_nc_ss=7b2a8&oh=00_AQPcvKANUqi_CPaZlXvr7Bl26uIG3QYjVEJ8aSJZM1bmxg&oe=6AD376DF', 0, 0, 0, 0]
-                ];
-                const stmt = db.prepare("INSERT INTO teams (name, acronym, image, champion, runner_up, third_place, semifinalist) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                defaultTeams.forEach(t => stmt.run(t));
-                stmt.finalize();
+        db.all("PRAGMA table_info(teams)", (err, cols) => {
+            const names = (cols || []).map(c => c.name);
+            const needed = ['name', 'acronym', 'image', 'champion', 'runner_up', 'third_place', 'semifinalist'];
+            const missing = needed.filter(c => !names.includes(c));
+            if (err || missing.length > 0) {
+                console.error('BANCO ANTIGO: tabela teams incompatível. Recriando... Faltando:', missing.join(', ') || (err && err.message));
+                db.serialize(() => {
+                    db.run("DROP TABLE IF EXISTS teams");
+                    db.run(`CREATE TABLE teams (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL, acronym TEXT NOT NULL, image TEXT NOT NULL,
+                        champion INTEGER DEFAULT 0, runner_up INTEGER DEFAULT 0,
+                        third_place INTEGER DEFAULT 0, semifinalist INTEGER DEFAULT 0
+                    )`, () => seedTeams());
+                });
+            } else {
+                db.get("SELECT COUNT(*) as count FROM teams", (errCount, row) => {
+                    if (!errCount && row && row.count === 0) seedTeams();
+                });
             }
         });
     });
+}
+
+function seedTeams() {
+    const defaultTeams = [
+        ['Colégio Canópus', 'CAN', 'https://scontent-gru1-1.xx.fbcdn.net/v/t39.30808-6/300576667_476619551139509_6941224390542513015_n.jpg?stp=dst-jpg_tt6&cstp=mx800x800&ctp=s800x800&_nc_cat=101&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=ae4R3qI_rM4Q7kNvwGnbb6h&_nc_oc=AdrhOzaXAaYH62PM0PhNnZXJrcRth-2ssFCFwamRfOV7Xx82ZG6JVbdm1Yyx4Q-i9gg&_nc_zt=23&_nc_ht=scontent-gru1-1.xx&_nc_gid=CL5gqr8TGtE09gA1fSLZuQ&_nc_ss=7b2a8&oh=00_AQPw90j3GEDTXK3tXvQOtrt0k1SoKM1QIMHria9TZFlWWw&oe=6AD38624', 2, 0, 0, 0],
+        ['Rede Decisão/Módulo', 'MOD', 'https://ugc.production.linktr.ee/DILxL8jQKSi0otT2Uy4w_5e1dc1e176aabfe8d07377b19887b84c2?io=true&size=avatar-v3_0', 1, 0, 0, 2],
+        ['Colégio Objetivo', 'OBJ', 'https://scontent-gru2-1.xx.fbcdn.net/v/t39.30808-6/261749881_4887557201309848_2673603789593802657_n.jpg?stp=dst-jpg_tt6&cstp=mx1000x1000&ctp=s1000x1000&_nc_cat=109&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=y0A-EAjmIwMQ7kNvwFu7h2b&_nc_oc=AdpwGFsKD7xHDbycwqLHkOhUuLyOj2LtOBwqfryJkRpZeXYFePdTHcA986A3yJcXSDk&_nc_zt=23&_nc_ht=scontent-gru2-1.xx&_nc_gid=1z2Cga_Aefbb_U-xe1oOcw&_nc_ss=7b2a8&oh=00_AQP_oXLsuB19bKVbV3XwZ0UXOx9H-loE96cScCL7NO5-IA&oe=6AD3854C', 0, 2, 0, 0],
+        ['Instituto Federal', 'IFSP', 'https://scontent-gru2-2.xx.fbcdn.net/v/t39.30808-6/292419707_428540039285469_3420664120318090063_n.jpg?stp=dst-jpg_tt6&cstp=mx900x1042&ctp=s900x1042&_nc_cat=102&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=MAS2Jv04qD0Q7kNvwGE9FW9&_nc_oc=AdoQfzMYSGRaGzl_1Ym4j5J96u9qTWXSBVthzvsfEo0eN89EGvT1qTfgPEhfylNu2I&_nc_zt=23&_nc_ht=scontent-gru2-2.xx&_nc_gid=eoeQu0uBkhuFiSe9CdYZ5w&_nc_ss=7b2a8&oh=00_AQPMzWVjiHGVL4uKtL8A5cthjQkwOf8r5ZJ1P_A2frpsZwQ&oe=6AD364A8', 0, 1, 1, 0],
+        ['Colégio Imperatrice', 'IMP', 'https://scontent-gru1-2.xx.fbcdn.net/v/t39.30808-6/533127058_122218958456122240_9154884991764728512_n.jpg?stp=dst-jpg_tt6&cstp=mx1080x1080&ctp=s1080x1080&_nc_cat=100&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=oRmKyOgMrxUQ7kNvwEtVTxp&_nc_oc=AdqIISAb9PZi54md9WVUCIuxHVj9wzwPxsfO6pUfKDnLrLq8eow4nVdhxwi2PR5jGw0&_nc_zt=23&_nc_ht=scontent-gru1-2.xx&_nc_gid=uiBIerTUWsqb_xwJ2G7GrA&_nc_ss=7b2a8&oh=00_AQP3o0PVJ1WzkN52FcWiJmhy-JozBBy3pKz9qg6LzEA&oe=6AD37FED', 0, 0, 2, 0],
+        ['Colégio Amplia/Caraguatá', 'AMP', 'https://scontent-gru2-2.xx.fbcdn.net/v/t39.30808-6/459556427_122103470552517182_4089939684042885040_n.jpg?stp=dst-jpg_tt6&cstp=mx2000x2000&ctp=s2000x2000&_nc_cat=105&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=Trz0WX9BHEoQ7kNvwHO4hs4&_nc_oc=AdoKP8nKNFp8A-hzY-5SIuVfQlrSQ6IlTHKCHFjVb-FUxRnNg8jTm9xpaxbz8dYiTJE&_nc_zt=23&_nc_ht=scontent-gru2-2.xx&_nc_gid=s8i6wGzUpVy5qLgEStv4kQ&_nc_ss=7b2a8&oh=00_AQNll-LrOwEKJuL5F2U2VfZQY3Z3JkX2W9Hm7C6nQ4pR8sT5uU1vW2xY3zA4bC5dE6fG&oe=6AD3787D', 0, 0, 0, 1],
+        ['ETEC de Caraguatatuba/CDU', 'ETEC', 'https://scontent-gru1-1.xx.fbcdn.net/v/t39.30808-6/426235193_903602695102152_7572691400377464565_n.jpg?stp=dst-jpg_tt6&cstp=mx1080x1080&ctp=s1080x1080&_nc_cat=104&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=E-FWezEkvYIQ7kNvwG7gB5K&_nc_oc=AdoTUSmU762ZzfWYrVWIKwKlwd0fYsnXpvRaSZDIKoYI6thzvsfEo0eN89EGvT1qTfgPEhfylNu2I&_nc_zt=23&_nc_ht=scontent-gru1-1.xx&_nc_gid=1ghA2BB4fTlWtnY1xeyWcQ&_nc_ss=7b2a8&oh=00_AQM9OIiJ0DYfUzWVHEqcgZaKKraizTAW2vWDfRqUnR4fJQ&oe=6AD362E2', 0, 0, 0, 0],
+        ['Colégio Tableau', 'TAB', 'https://scontent-gru2-2.xx.fbcdn.net/v/t39.30808-6/352464491_220473307511154_3318921309442921716_n.jpg?stp=dst-jpg_tt6&cstp=mx723x724&ctp=s723x724&_nc_cat=105&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=hp7X1TaetZcQ7kNvwEtd3Cv&_nc_oc=AdrsQFTDFqPCTqiHe9rY4Ez4_bwLdxXbsnzRmZaBBdPOyTuHhecgua6DlRYkGdBHHQw&_nc_zt=23&_nc_ht=scontent-gru2-2.xx&_nc_gid=s5BxW8GCn1uou9Cc004OOw&_nc_ss=7b2a8&oh=00_AQMeMF4bu3m0WVLHm-Prdjmbi99MGsk-mYhFm8Y2ytofkw&oe=6AD380DD', 0, 0, 0, 0],
+        ['Colégio Nova Geração', 'CNG', 'https://scontent-gru2-1.xx.fbcdn.net/v/t39.30808-6/518326505_1520068049385695_578969158403584619_n.jpg?stp=dst-jpg_tt6&cstp=mx740x740&ctp=s740x740&_nc_cat=107&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=KmH7Zqq0D3gQ7kNvwEZ9bV&_nc_oc=Adrex_UAeFKSM0N_n7MuTrpLGvxn5r8Ja8FddMoHdbJ_9K_s963Pinln4THLaa73SyM&_nc_zt=23&_nc_ht=scontent-gru2-1.xx&_nc_gid=iM2yych6gGXIvAUCeq6MsQ&_nc_ss=7b2a8&oh=00_AQPcvKANUqi_CPaZlXvr7Bl26uIG3QYjVEJ8aSJZM1bmxg&oe=6AD376DF', 0, 0, 0, 0]
+    ];
+    const stmt = db.prepare("INSERT INTO teams (name, acronym, image, champion, runner_up, third_place, semifinalist) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    defaultTeams.forEach(t => stmt.run(t));
+    stmt.finalize(() => console.log('Equipes padrão cadastradas.'));
+}
+
+function ensureMatchesTable() {
     db.run(`CREATE TABLE IF NOT EXISTS matches (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         phase TEXT NOT NULL, match_index INTEGER NOT NULL,
@@ -67,27 +99,55 @@ function initDb() {
         team1_score INTEGER DEFAULT 0, team2_score INTEGER DEFAULT 0,
         team1_pen INTEGER DEFAULT NULL, team2_pen INTEGER DEFAULT NULL
     )`, () => {
-        // Índice único: garante que INSERT OR REPLACE saiba qual linha substituir
-        db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_phase_index ON matches(phase, match_index)", (errIdx) => {
-            if (errIdx) console.error('Aviso: índice único não criado (verifique duplicatas na tabela matches):', errIdx.message);
-        });
-        db.get("SELECT COUNT(*) as count FROM matches", (err, row) => {
-            if (row && row.count === 0) {
-                const initialMatches = [
-                    ['swiss_r1', 0], ['swiss_r1', 1], ['swiss_r1', 2], ['swiss_r1', 3],
-                    ['swiss_r2', 0], ['swiss_r2', 1], ['swiss_r2', 2], ['swiss_r2', 3],
-                    ['swiss_r3', 0], ['swiss_r3', 1],
-                    ['playoffs_semi', 0], ['playoffs_semi', 1],
-                    ['playoffs_third', 0], ['playoffs_final', 0]
-                ];
-                const stmt = db.prepare("INSERT OR IGNORE INTO matches (phase, match_index) VALUES (?, ?)");
-                initialMatches.forEach(m => stmt.run(m));
-                stmt.finalize();
+        db.all("PRAGMA table_info(matches)", (err, cols) => {
+            const names = (cols || []).map(c => c.name);
+            const needed = ['phase', 'match_index', 'team1_id', 'team2_id', 'team1_score', 'team2_score', 'team1_pen', 'team2_pen'];
+            const missing = needed.filter(c => !names.includes(c));
+            if (err || missing.length > 0) {
+                console.error('BANCO ANTIGO: tabela matches incompatível (este era o erro que bloqueava o salvamento). Recriando... Faltando:', missing.join(', ') || (err && err.message));
+                db.serialize(() => {
+                    db.run("DROP TABLE IF EXISTS matches");
+                    db.run(`CREATE TABLE matches (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        phase TEXT NOT NULL, match_index INTEGER NOT NULL,
+                        team1_id INTEGER, team2_id INTEGER,
+                        team1_score INTEGER DEFAULT 0, team2_score INTEGER DEFAULT 0,
+                        team1_pen INTEGER DEFAULT NULL, team2_pen INTEGER DEFAULT NULL
+                    )`, () => {
+                        db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_phase_index ON matches(phase, match_index)", (errIdx) => {
+                            if (errIdx) console.error('Aviso no índice único:', errIdx.message);
+                        });
+                        seedMatches();
+                    });
+                });
+            } else {
+                db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_phase_index ON matches(phase, match_index)", (errIdx) => {
+                    if (errIdx) console.error('Aviso no índice único (verifique duplicatas):', errIdx.message);
+                });
+                db.get("SELECT COUNT(*) as count FROM matches", (errCount, row) => {
+                    if (!errCount && row && row.count === 0) seedMatches();
+                });
             }
         });
     });
 }
 
+function seedMatches() {
+    const initialMatches = [
+        ['swiss_r1', 0], ['swiss_r1', 1], ['swiss_r1', 2], ['swiss_r1', 3],
+        ['swiss_r2', 0], ['swiss_r2', 1], ['swiss_r2', 2], ['swiss_r2', 3],
+        ['swiss_r3', 0], ['swiss_r3', 1],
+        ['playoffs_semi', 0], ['playoffs_semi', 1],
+        ['playoffs_third', 0], ['playoffs_final', 0]
+    ];
+    const stmt = db.prepare("INSERT OR IGNORE INTO matches (phase, match_index) VALUES (?, ?)");
+    initialMatches.forEach(m => stmt.run(m));
+    stmt.finalize(() => console.log('Partidas iniciais cadastradas.'));
+}
+
+// ============================================================
+// LAYOUT
+// ============================================================
 function renderLayout(activeTab, content, loginError = '') {
     return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -211,6 +271,9 @@ function renderLayout(activeTab, content, loginError = '') {
 </html>`;
 }
 
+// ============================================================
+// ROTAS
+// ============================================================
 app.get('/logout', (req, res) => {
     req.session = null;
     res.redirect('/?tab=home');
@@ -237,7 +300,7 @@ app.post('/login', (req, res) => {
     }
 });
 
-// ROTA SIMPLIFICADA: sem transação, sem prepare, com timeout de segurança.
+// Salvamento simplificado: sem transação, sem prepare, com timeout de segurança.
 // INSERT OR REPLACE funciona em qualquer versão do SQLite.
 app.post('/save-matches', (req, res) => {
     if (!req.session.adminLogged) {
