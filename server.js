@@ -65,9 +65,12 @@ function initDb() {
         phase TEXT NOT NULL, match_index INTEGER NOT NULL,
         team1_id INTEGER, team2_id INTEGER,
         team1_score INTEGER DEFAULT 0, team2_score INTEGER DEFAULT 0,
-        team1_pen INTEGER DEFAULT NULL, team2_pen INTEGER DEFAULT NULL,
-        UNIQUE(phase, match_index)
+        team1_pen INTEGER DEFAULT NULL, team2_pen INTEGER DEFAULT NULL
     )`, () => {
+        // Índice único: garante que INSERT OR REPLACE saiba qual linha substituir
+        db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_phase_index ON matches(phase, match_index)", (errIdx) => {
+            if (errIdx) console.error('Aviso: índice único não criado (verifique duplicatas na tabela matches):', errIdx.message);
+        });
         db.get("SELECT COUNT(*) as count FROM matches", (err, row) => {
             if (row && row.count === 0) {
                 const initialMatches = [
@@ -234,70 +237,62 @@ app.post('/login', (req, res) => {
     }
 });
 
+// ROTA SIMPLIFICADA: sem transação, sem prepare, com timeout de segurança.
+// INSERT OR REPLACE funciona em qualquer versão do SQLite.
 app.post('/save-matches', (req, res) => {
     if (!req.session.adminLogged) {
-        console.error('/save-matches: tentativa sem sessão válida.');
         return res.status(401).json({ success: false, error: 'Sessão expirada. Recarregue a página e faça login novamente.' });
     }
-    console.log('/save-matches: salvando para', req.session.adminUser);
+    console.log('/save-matches: recebido de', req.session.adminUser);
 
-    const matchesData = req.body.matches;
-    if (!Array.isArray(matchesData) || matchesData.length === 0) {
+    const matchesData = (req.body && Array.isArray(req.body.matches)) ? req.body.matches : null;
+    if (!matchesData || matchesData.length === 0) {
         return res.status(400).json({ success: false, error: 'Dados inválidos ou vazios.' });
     }
 
-    // UPSERT: atualiza se a partida existir, cria se não existir
-    const upsertSql = `INSERT INTO matches
+    let responded = false;
+    const respond = (code, payload) => {
+        if (responded) return;
+        responded = true;
+        res.status(code).json(payload);
+    };
+
+    // Garantia: o botão NUNCA fica travado em "Salvando..."
+    const timeout = setTimeout(() => {
+        console.error('/save-matches: TIMEOUT — o banco não respondeu em 15s.');
+        respond(504, { success: false, error: 'Tempo esgotado ao salvar. Tente novamente.' });
+    }, 15000);
+
+    const sql = `INSERT OR REPLACE INTO matches
         (phase, match_index, team1_id, team2_id, team1_score, team2_score, team1_pen, team2_pen)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(phase, match_index) DO UPDATE SET
-            team1_id = excluded.team1_id, team2_id = excluded.team2_id,
-            team1_score = excluded.team1_score, team2_score = excluded.team2_score,
-            team1_pen = excluded.team1_pen, team2_pen = excluded.team2_pen`;
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
 
-    db.serialize(() => {
-        db.run("BEGIN TRANSACTION", (errBegin) => {
-            if (errBegin) {
-                console.error('Erro no BEGIN TRANSACTION:', errBegin.message);
-                return res.json({ success: false, error: errBegin.message });
+    let completed = 0;
+    let errors = [];
+
+    matchesData.forEach(m => {
+        const t1 = (m.team1_id !== null && m.team1_id !== undefined && m.team1_id !== '') ? parseInt(m.team1_id) : null;
+        const t2 = (m.team2_id !== null && m.team2_id !== undefined && m.team2_id !== '') ? parseInt(m.team2_id) : null;
+        const s1 = parseInt(m.team1_score) || 0;
+        const s2 = parseInt(m.team2_score) || 0;
+        const p1 = (m.team1_pen !== null && m.team1_pen !== undefined && m.team1_pen !== '') ? parseInt(m.team1_pen) : null;
+        const p2 = (m.team2_pen !== null && m.team2_pen !== undefined && m.team2_pen !== '') ? parseInt(m.team2_pen) : null;
+
+        db.run(sql, [String(m.phase), parseInt(m.match_index), t1, t2, s1, s2, p1, p2], (err) => {
+            if (err) {
+                errors.push(m.phase + '#' + m.match_index + ': ' + err.message);
+                console.error('/save-matches erro:', m.phase, m.match_index, err.message);
             }
-            const stmt = db.prepare(upsertSql);
-            let completed = 0, hasError = false, lastError = '';
-
-            matchesData.forEach(m => {
-                const t1 = (m.team1_id !== null && m.team1_id !== undefined && m.team1_id !== '') ? parseInt(m.team1_id) : null;
-                const t2 = (m.team2_id !== null && m.team2_id !== undefined && m.team2_id !== '') ? parseInt(m.team2_id) : null;
-                const s1 = parseInt(m.team1_score) || 0;
-                const s2 = parseInt(m.team2_score) || 0;
-                const p1 = (m.team1_pen !== null && m.team1_pen !== undefined && m.team1_pen !== '') ? parseInt(m.team1_pen) : null;
-                const p2 = (m.team2_pen !== null && m.team2_pen !== undefined && m.team2_pen !== '') ? parseInt(m.team2_pen) : null;
-
-                stmt.run(t1, t2, s1, s2, p1, p2, String(m.phase), parseInt(m.match_index), (errRun) => {
-                    if (errRun) {
-                        hasError = true;
-                        lastError = errRun.message;
-                        console.error('Erro ao salvar partida', m.phase, m.match_index, ':', errRun.message);
-                    }
-                    completed++;
-                    if (completed === matchesData.length) {
-                        stmt.finalize(() => {
-                            if (hasError) {
-                                db.run("ROLLBACK", () => res.json({ success: false, error: 'Erro no banco: ' + lastError }));
-                            } else {
-                                db.run("COMMIT", (errCommit) => {
-                                    if (errCommit) {
-                                        console.error('Erro no COMMIT:', errCommit.message);
-                                        res.json({ success: false, error: errCommit.message });
-                                    } else {
-                                        console.log('/save-matches:', matchesData.length, 'partidas salvas com sucesso.');
-                                        res.json({ success: true, saved: matchesData.length });
-                                    }
-                                });
-                            }
-                        });
-                    }
-                });
-            });
+            completed++;
+            if (completed === matchesData.length) {
+                clearTimeout(timeout);
+                if (errors.length > 0) {
+                    respond(500, { success: false, error: errors.join(' | ') });
+                } else {
+                    console.log('/save-matches:', matchesData.length, 'partidas salvas.');
+                    respond(200, { success: true, saved: matchesData.length });
+                }
+            }
         });
     });
 });
@@ -646,8 +641,8 @@ app.get('/', (req, res) => {
                                 setTimeout(() => location.reload(), 1000);
                             } else if (res.status === 401) {
                                 showStatus('❌ Sua sessão expirou. Recarregue a página (F5) e faça login novamente.', true);
-                            } else if (res.status === 502) {
-                                showStatus('❌ O servidor está reiniciando. Aguarde ~1 minuto e tente salvar de novo.', true);
+                            } else if (res.status === 502 || res.status === 504) {
+                                showStatus('❌ O servidor está indisponível ou reiniciando. Aguarde ~1 minuto e tente de novo.', true);
                             } else {
                                 showStatus('❌ Erro ao salvar (HTTP ' + res.status + '): ' + (data.error || 'resposta inválida do servidor'), true);
                                 console.error('Resposta do servidor:', res.status, data);
