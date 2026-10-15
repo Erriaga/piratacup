@@ -23,3 +23,8 @@ Thumbs.db
 # Editores
 .vscode/
 .idea/
+
+git rm --cached piratacup.db
+git add .gitignore
+git commit -m "Remove banco do repositório e adiciona .gitignore"
+git push
